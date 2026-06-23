@@ -1,6 +1,6 @@
 # tray-brain-plugin
 
-> **Status:** extracted (POC §17.2 step 2 done) — **not yet cold-install-validated** (step 3).
+> **Status:** extracted + cold-install-validated (POC §17.2 steps 2–3). **§17.1 checkbox 1 (packaging/isolation) MET** — `/brain:freshness` ran end-to-end through a live `--plugin-dir` install (slash command → skill → bundled `bin/` script → report). Remaining gate: §10 eval on a real Tray repo (checkbox 2 = the go/no-go for teams).
 > **Folder/repo name is provisional** — confirm before the first push to vendsy git.
 
 Development repo for the standalone Claude Code **brain plugin** (POC §16): the knowledge
@@ -51,7 +51,7 @@ delegated/external: **B3** graphify skill, **B4** graphify CLI. **B5** `BRAIN_RO
 
 | # | Item | Status |
 |---|---|---|
-| 0 | **User-typed `/brain:*` slash invocation** | ✅ fixed — live install showed `skills/`-only entries aren't slash-typed ("Unknown command"); added `commands/` delegating to the skills (the `ai-agent-manager` pattern) |
+| 0 | **User-typed `/brain:*` slash invocation** | ✅ **verified live** — `/brain:freshness` ran end-to-end against the vault (47 notes, report written). Fix was adding `commands/` delegating to the skills (`skills/`-only entries returned "Unknown command"). |
 | 1 | **`${CLAUDE_PLUGIN_ROOT}` expansion** in command/skill bodies | ✅ confirmed — substituted inline in command/skill/hook content (docs + reference plugin) |
 | 2 | **`harvest-chats.mjs` path→projects-dir encoding** matches the OS | ✅ validated — identical real harvest results to the pilot on Windows |
 | 3 | **Genericized bin scripts preserve behavior** | ✅ validated — `freshness` output byte-identical to the pilot (with + without explicit `REPOS_DIR`) |

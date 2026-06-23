@@ -1,0 +1,4 @@
+# Machine-local + generated — never commit eval runs or local paths.
+config.json
+results/
+report.md
