@@ -38,11 +38,11 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
 > **Path handling — do this for EVERY path you persist.** Normalize paths to **OS-native absolute form** before writing them to the registry *or* `.claude/settings.json`, and use the **same** form in both files. On Windows, convert a git-bash `/c/Users/...` to `C:/Users/...` (forward slashes are fine for Node); resolve `~` and relative paths to absolute up front. **Why it matters:** the registry and settings must agree, because a later re-init that reads `registry.repos_dir` back into a settings `REPOS_DIR` would otherwise persist a git-bash path — and `path.resolve('/c/Users/...')` on Windows resolves to `C:\c\Users\...`, which breaks harvest's project-dir encoding (and any script that joins `REPOS_DIR`). When in doubt, mirror the OS-native style the user's `BRAIN_ROOT` ends up in.
 
-1. **Ensure graphify is installed** (delegated — the brain does not vendor it, POC §16.1):
+1. **Ensure graphify is installed at the pinned version** (delegated — the brain does not vendor it, POC §16.1). **Pin** (`==0.8.46`) rather than floating latest: graphify's skill auto-runs `uv tool install --upgrade`, and on Windows a mid-upgrade venv rebuild can leave a reparse-point/locked file that breaks the launcher in a loop (see `/brain:doctor`). A fixed version means import stays healthy and the auto-upgrade never fires.
    ```bash
-   command -v graphify || uv tool install graphifyy
+   command -v graphify || uv tool install graphifyy==0.8.46
    ```
-   If `uv` is absent, tell the user to install it (or `pip install graphifyy`) and stop.
+   If `uv` is absent, tell the user to install it (or `pip install graphifyy==0.8.46`) and stop. If graphify is already installed at another version, leave it — **don't** force an upgrade here; `/brain:doctor` handles drift and repair.
 
 2. **Load the registry** (`~/.claude/brain/registry.json`). If it doesn't exist, create it from the template with an empty `vaults: []`.
 

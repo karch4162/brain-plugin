@@ -16,13 +16,32 @@ hand-assembled set of global hooks + skills + a hand-written query rule (POC §1
 | **Graph sync** | `bin/sync-graph.sh` + `bin/build-community-notes.mjs` | publish per-repo graph mirrors into the vault, namespaced, with community stubs. |
 | **graph-before-grep** | `hooks/` | self-gating PreToolUse nudge (fires only where `graphify-out/graph.json` exists). |
 | **Multi-vault registry** | `skills/brain-init` + `templates/brain-registry.example.json` | route a project's mirror+wiki to the right vault (personal vs team). POC §16.2. |
+| **Health/repair** | `skills/doctor` | `/brain:doctor` diagnoses + repairs graphify launcher/version drift, the vault binding, the registry, and stale interpreter caches. |
 
 ## Dependencies
 
 - **graphify CLI** — *delegated, not vendored* (POC §16.1 one-installer rule). `/brain:init`
-  ensures it via `uv tool install graphifyy`; the separately-installed graphify skill provides
-  `graphify query/path/explain`.
+  ensures it via `uv tool install graphifyy==0.8.46` (**pinned** — see Troubleshooting); the
+  separately-installed graphify skill provides `graphify query/path/explain`.
 - Node (for the `bin/*.mjs` scripts and the hook), Bash (for `sync-graph.sh`), git.
+
+## Troubleshooting
+
+**Graph queries fail / "graphify launcher points at a venv that no longer exists" / `ModuleNotFoundError: graphify.__main__` / "failed to canonicalize script path".**
+This is graphify's (the delegated tool's) fragility, not the brain's — the §6.1 grep fallback keeps the
+agent answering, but the graph is unavailable until fixed. Root cause: graphify's skill auto-runs
+`uv tool install --upgrade graphifyy`, and on Windows a mid-upgrade venv rebuild can leave a
+reparse-point/locked file (`os error 4395`) so the next removal fails and the launcher breaks — and it
+**loops** (broken → import fails → re-upgrade → breaks again), worsened by multiple Claude sessions
+upgrading concurrently. **Fix: `/brain:doctor`** (clean-reinstalls to the pinned version + re-syncs the
+skill). Manual equivalent, from a single session with others closed:
+```bash
+uv tool uninstall graphifyy 2>/dev/null || true
+cmd //c "rmdir /s /q %APPDATA%\\uv\\tools\\graphifyy" 2>/dev/null || true   # Windows: clear the stuck dir
+uv tool install graphifyy==0.8.46
+graphify install
+```
+Avoid by keeping graphify **pinned** (so its import stays healthy and the auto-upgrade never fires).
 
 ## Contracts (frozen — consumers depend on these)
 
@@ -42,7 +61,7 @@ script-invocation path resolution and the registry/init flow to need iteration. 
 ## Commands vs skills
 
 User-typed slash commands live in `commands/` (`/brain:save` `/brain:resume` `/brain:freshness`
-`/brain:wiki-ingest` `/brain:init`); each is a thin entry point that reads its `skills/<name>/SKILL.md`
+`/brain:wiki-ingest` `/brain:init` `/brain:doctor`); each is a thin entry point that reads its `skills/<name>/SKILL.md`
 as the authority. The skills also carry natural-language triggers (e.g. "lint the wiki" → freshness)
 for model auto-invocation. (Plugin `skills/` alone are not user-typed slash commands — that's what
 `commands/` is for.)
