@@ -51,16 +51,26 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
 4. **Select the vault — explicitly, via `AskUserQuestion`.** Present the registry vaults plus "register a new vault". Put the inferred default first, labeled `(suggested)`. **If the user's pick disagrees with the git-remote inference, surface the mismatch and re-confirm** ("This repo's remote is `vendsy/…` but you picked the personal vault — proprietary code would sync into a personal brain. Continue?"). This warning is the whole point of the step.
 
-5. **If registering a new vault:** ask for a name, a path, and (optional) a remote, then scaffold it:
+5. **If registering a vault** (the "register a new vault" choice): ask for a name, a path, and (optional) a remote. Then **branch on whether that path is already a populated vault — do NOT scaffold over existing content.**
+
+   **First detect:** treat the path as an **existing vault** if it already contains a `CLAUDE.md` *or* a `wiki/` directory. Otherwise it's a **new vault**.
+
+   **(a) Existing vault → register + fill gaps non-destructively. NEVER overwrite.**
+   - Do **not** run the skeleton/template `cp` commands over it — that would clobber the user's `CLAUDE.md`, `wiki/`, `.graphifyignore`, etc.
+   - Create only **missing** governance files from templates (skip any that exist): e.g. `[ -f "<vault>/.saveinclude" ] || cp "${CLAUDE_PLUGIN_ROOT}/templates/saveinclude" "<vault>/.saveinclude"` (same pattern for `.gitignore`). **Leave `CLAUDE.md` and `.graphifyignore` untouched** — they're user content.
+   - If `CLAUDE.md` has **no** "3-step query rule" section, *offer* to merge one in from `${CLAUDE_PLUGIN_ROOT}/templates/CLAUDE.brain.md` — **ask first via AskUserQuestion, never auto-edit** an existing CLAUDE.md.
+   - Register it in the registry; skip all scaffolding.
+
+   **(b) New / empty vault → full scaffold:**
    ```bash
-   # copy the skeleton + governance templates into the new vault path
    cp -r "${CLAUDE_PLUGIN_ROOT}/templates/vault-skeleton/." "<vault>/"
    cp "${CLAUDE_PLUGIN_ROOT}/templates/graphifyignore" "<vault>/.graphifyignore"
    cp "${CLAUDE_PLUGIN_ROOT}/templates/saveinclude"     "<vault>/.saveinclude"
    cp "${CLAUDE_PLUGIN_ROOT}/templates/gitignore"       "<vault>/.gitignore"
    ```
-   Then substitute the skeleton placeholders (`{{VAULT_NAME}}`, `{{DATE}}`, `{{area}}`) with real values.
-   Then write the **3-step query rule** into the vault's `CLAUDE.md`: if `<vault>/CLAUDE.md` is absent, copy `${CLAUDE_PLUGIN_ROOT}/templates/CLAUDE.brain.md` to it; if present, **merge** the rule section in idempotently (don't duplicate an existing "## The 3-step query rule" block). `git init` the vault if it isn't a repo. Append the new vault to the registry with its governance profile.
+   Substitute the skeleton placeholders (`{{VAULT_NAME}}`, `{{DATE}}`, `{{area}}`). Write the **3-step query rule** into `CLAUDE.md` by copying `${CLAUDE_PLUGIN_ROOT}/templates/CLAUDE.brain.md` (it's absent in a new vault). `git init` if not a repo.
+
+   In **both** cases, append the vault to the registry with its governance profile.
 
 6. **Wire this project to the vault.** Persist the binding so every session here resolves it — merge into this project's `.claude/settings.json` (create if missing), preserving any existing keys:
    ```json

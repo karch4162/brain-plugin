@@ -50,7 +50,7 @@ for model auto-invocation. (Plugin `skills/` alone are not user-typed slash comm
 ## Local testing
 
 ```bash
-claude --plugin-dir <abs-path-to>/tray-brain-plugin/brain   # load this plugin from disk
+claude --plugin-dir <your-checkout>/brain   # the dir containing .claude-plugin/plugin.json
 # restart the session (or /reload-plugins) after adding/changing commands
 /brain:init                          # scaffold/select a vault
 /brain:freshness                     # run the wiki health check
