@@ -36,6 +36,8 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
 ## What to do when invoked
 
+> **Path handling — do this for EVERY path you persist.** Normalize paths to **OS-native absolute form** before writing them to the registry *or* `.claude/settings.json`, and use the **same** form in both files. On Windows, convert a git-bash `/c/Users/...` to `C:/Users/...` (forward slashes are fine for Node); resolve `~` and relative paths to absolute up front. **Why it matters:** the registry and settings must agree, because a later re-init that reads `registry.repos_dir` back into a settings `REPOS_DIR` would otherwise persist a git-bash path — and `path.resolve('/c/Users/...')` on Windows resolves to `C:\c\Users\...`, which breaks harvest's project-dir encoding (and any script that joins `REPOS_DIR`). When in doubt, mirror the OS-native style the user's `BRAIN_ROOT` ends up in.
+
 1. **Ensure graphify is installed** (delegated — the brain does not vendor it, POC §16.1):
    ```bash
    command -v graphify || uv tool install graphifyy
