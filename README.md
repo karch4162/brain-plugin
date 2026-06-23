@@ -19,7 +19,8 @@ tray-brain-plugin/                  # this repo (marketplace wrapper)
 ├── .claude-plugin/marketplace.json # marketplace manifest
 └── brain/                          # the plugin (name: "brain")
     ├── .claude-plugin/plugin.json
-    ├── skills/{save,resume,freshness,wiki-ingest,brain-init}/SKILL.md
+    ├── commands/{save,resume,freshness,wiki-ingest,init}.md   # user-typed /brain:* slash entry points
+    ├── skills/{save,resume,freshness,wiki-ingest,brain-init}/SKILL.md   # authority + model-invoked
     ├── hooks/{hooks.json, graph-before-grep.mjs}
     ├── bin/{sync-graph.sh, freshness.mjs, build-community-notes.mjs, harvest-chats.mjs}
     └── templates/{CLAUDE.brain.md, graphifyignore, saveinclude, gitignore,
@@ -50,7 +51,8 @@ delegated/external: **B3** graphify skill, **B4** graphify CLI. **B5** `BRAIN_RO
 
 | # | Item | Status |
 |---|---|---|
-| 1 | **`${CLAUDE_PLUGIN_ROOT}` expansion** in the Bash tool when a plugin *skill* invokes `node "${CLAUDE_PLUGIN_ROOT}/bin/…"` | ⏳ **open** — needs a live `claude --plugin-dir` install to confirm (vs. needing PATH / an absolute path). The one genuinely untested mechanism. |
+| 0 | **User-typed `/brain:*` slash invocation** | ✅ fixed — live install showed `skills/`-only entries aren't slash-typed ("Unknown command"); added `commands/` delegating to the skills (the `ai-agent-manager` pattern) |
+| 1 | **`${CLAUDE_PLUGIN_ROOT}` expansion** in command/skill bodies | ✅ confirmed — substituted inline in command/skill/hook content (docs + reference plugin) |
 | 2 | **`harvest-chats.mjs` path→projects-dir encoding** matches the OS | ✅ validated — identical real harvest results to the pilot on Windows |
 | 3 | **Genericized bin scripts preserve behavior** | ✅ validated — `freshness` output byte-identical to the pilot (with + without explicit `REPOS_DIR`) |
 | 4 | **No fixed-layout assumption** (repos location) | ✅ fixed + validated — auto-detects repos 1–2 levels above the vault; `REPOS_DIR` override persisted by `/brain:init`. Caught a 0→35 false-positive on the original guess. |

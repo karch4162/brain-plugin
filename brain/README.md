@@ -39,9 +39,19 @@ install + structural diff against the `pre-plugin-baseline` tag is what hardens 
 script-invocation path resolution and the registry/init flow to need iteration. See
 `../AI-OS/personal-brain/INSTALL_BASELINE.md` for the acceptance checklist.
 
+## Commands vs skills
+
+User-typed slash commands live in `commands/` (`/brain:save` `/brain:resume` `/brain:freshness`
+`/brain:wiki-ingest` `/brain:init`); each is a thin entry point that reads its `skills/<name>/SKILL.md`
+as the authority. The skills also carry natural-language triggers (e.g. "lint the wiki" → freshness)
+for model auto-invocation. (Plugin `skills/` alone are not user-typed slash commands — that's what
+`commands/` is for.)
+
 ## Local testing
 
 ```bash
-claude --plugin-dir ./brain          # load this plugin from disk
+claude --plugin-dir <abs-path-to>/tray-brain-plugin/brain   # load this plugin from disk
+# restart the session (or /reload-plugins) after adding/changing commands
 /brain:init                          # scaffold/select a vault
+/brain:freshness                     # run the wiki health check
 ```
