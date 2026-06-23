@@ -18,6 +18,33 @@ hand-assembled set of global hooks + skills + a hand-written query rule (POC §1
 | **Multi-vault registry** | `skills/brain-init` + `templates/brain-registry.example.json` | route a project's mirror+wiki to the right vault (personal vs team). POC §16.2. |
 | **Health/repair** | `skills/doctor` | `/brain:doctor` diagnoses + repairs graphify launcher/version drift, the vault binding, the registry, and stale interpreter caches. |
 
+## Setup & usage — by scenario (start here)
+
+Find your situation, run the commands in order. Legend: **`/brain:*`** = this plugin · **`/graphify`** = the delegated graphify skill · **`/plugin …`** = built-in Claude Code.
+
+### Prerequisites — once per machine
+1. Install **`uv`** (https://docs.astral.sh/uv/). The brain installs graphify (pinned) through it on first `/brain:init`.
+2. Install the plugin (needs access to the repo):
+   ```
+   /plugin marketplace add https://github.com/vendsy/tray-brain-plugin
+   /plugin install brain@brain-marketplace
+   ```
+   Then restart Claude Code (or `/reload-plugins`).
+
+### Scenarios
+
+| Your situation | Run, in order | Notes |
+|---|---|---|
+| **A · New code repo, not yet in a brain** | `/brain:init` → `/graphify .` → *(work)* → `/brain:save` | `init` picks/registers the target vault + wires `BRAIN_ROOT`; `graphify .` builds the local graph the hook & queries use; `save` syncs a mirror into the vault. |
+| **B · Repo already linked, but you're on a new machine** | *(prereqs)* → clone the vault locally → `/brain:init` → `/graphify .` *(if no `graphify-out/`)* | Re-run `init`: the binding (`BRAIN_ROOT`) and registry are **per-machine** — `init` writes them to the gitignored `.claude/settings.local.json`, so this never conflicts with the shared repo. |
+| **C · The vault repo itself, on a new machine** | clone the vault → `cd` into it → `/brain:init` | Registers the vault + binds it to itself. Detects the existing `CLAUDE.md`/`wiki/` and **won't overwrite** them. |
+| **D · No vault exists yet (first time ever)** | `/brain:init` → choose **"register a new vault"** → give it a path | Scaffolds the skeleton + query-rule `CLAUDE.md` + governance files. Then onboard code repos via scenario A. |
+| **E · Daily work in a linked repo** | `/brain:resume` *(start)* → *(work — just ask structural questions)* → `/brain:save` *(end)* | Graph-before-grep fires automatically; you don't run a command to "use" the graph. |
+| **F · Tending the vault** | `/brain:freshness` · `/brain:wiki-ingest` | Run from the vault. `freshness` = rot review queue (orphans/dead links/stale); `wiki-ingest` = distill harvested chats → draft notes. |
+| **G · Graph / graphify acting broken** | `/brain:doctor` | Diagnoses + repairs the graphify launcher/version, the vault binding, the registry, and stale interpreter caches. |
+
+> **Per-machine, not per-clone:** the vault binding and registry (`~/.claude/brain/registry.json`) are machine-specific. Cloning a linked repo onto a new laptop always needs one `/brain:init` re-run (scenario B) — it's quick, non-destructive, and writes only to the gitignored local override.
+
 ## Dependencies
 
 - **graphify CLI** — *delegated, not vendored* (POC §16.1 one-installer rule). `/brain:init`

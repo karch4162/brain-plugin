@@ -74,10 +74,11 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
    In **both** cases, append the vault to the registry with its governance profile.
 
-6. **Wire this project to the vault.** Persist the binding so every session here resolves it — merge into this project's `.claude/settings.json` (create if missing), preserving any existing keys:
+6. **Wire this project to the vault — machine-locally.** `BRAIN_ROOT`/`REPOS_DIR` are **absolute, machine-specific** paths, so persist them to **`.claude/settings.local.json`** (the per-machine override) — NOT the shared `.claude/settings.json`, which would carry one dev's paths into every teammate's clone. Create it if missing, preserve existing keys, and ensure it's gitignored (append `.claude/settings.local.json` to the project's `.gitignore` if absent — never commit one machine's paths into a shared repo):
    ```json
    { "env": { "BRAIN_ROOT": "<absolute vault path>", "REPOS_DIR": "<where the vault's mirrored repos are checked out>" } }
    ```
+   (`settings.local.json` overrides `settings.json`, so each dev's binding wins locally regardless of what's committed.)
    - `BRAIN_ROOT` is the **neutral** contract var (POC §16.1) — the scripts, skills, and any consumer read it. Do not use a consumer-namespaced name.
    - `REPOS_DIR` tells the sync/harvest/freshness scripts where the *code repos* live. **Do not assume a fixed layout** — infer a default (the parent dir of the project being wired, or the vault's parent), **show it, and let the user correct it**, then persist. The scripts also auto-detect repos one or two levels above the vault, so `REPOS_DIR` is only required when checkouts live somewhere non-standard — but persisting it removes the guess. Store it on the vault's registry entry too (`repos_dir`).
 
