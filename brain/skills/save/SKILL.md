@@ -43,13 +43,24 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    - <date> — <one-line summary of what this session changed in the vault>.
    ```
 
-5. **Sync graph mirrors if any covered repo's graph changed this session.** A *covered repo* is any repo with a mirror folder under `graphify/<repo>/`. If you ran `/graphify --update`, a graph merge, or edited code in a covered repo such that its `graphify-out/graph.json` changed:
-   ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/bin/sync-graph.sh"      # syncs every covered repo whose graph differs from the mirror
-   ```
-   (Run from the vault root, or with `BRAIN_ROOT=<vault>` set. It is a no-op for unchanged repos and writes its own `log.md` line + commit.) Skip this step if no graph changed.
+5. **(Re)build changed repo graphs at the standard scope, then sync mirrors.** A *covered repo* is any repo with a mirror folder under `graphify/<repo>/`. For each covered repo whose **source** changed this session:
+   - **Build at the recorded scope, code-only (AST), incrementally — never prompt for scope.** Read the repo's scope from the vault `CLAUDE.md` "Repos this brain covers" table (e.g. `lib/`) and rebuild over exactly those source roots:
+     ```bash
+     ( cd "$REPOS_DIR/<repo>" && graphify <source-roots> --update )   # code-only ⇒ pure AST, free/fast, no subagents, no scope prompt
+     ```
+     The scope is predetermined (CLAUDE.md) — do **not** ask the user to choose, and do **not** run `graphify .` (that pulls in tests/docs/platform/deps and triggers the "pick a subfolder" prompt). Tests/docs/platform/deps are excluded simply by being outside the source roots.
+   - **Sync the mirrors:**
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/bin/sync-graph.sh"      # syncs every covered repo whose graph differs from the mirror
+     ```
+   (Run from the vault root, or with `BRAIN_ROOT=<vault>` set. Sync is a no-op for unchanged repos and writes its own `log.md` line + commit.) Skip if no covered repo's source changed.
 
-5b. **Refresh the wiki concept graph if `wiki/` notes changed this session.** The vault's own graph (`graphify-out/graph.json`, built over `wiki/`) goes stale when notes are added/edited. If you created or edited any `wiki/` note, rebuild it incrementally:
+5b. **Ingest changed repo docs into the wiki (§15.6 split) — incremental, the standard docs→wiki path (no separate command).** For each covered repo, check its `docs/` + `README` + top-level design docs for files changed since the last save. By type:
+   - **Canonical / structured** (contracts, standards, machine-readable specs, "drift is a defect" docs): create/update a **link-note** in `wiki/<area>/` that *points at* the doc (`source:` anchor + provenance) and summarizes what it governs — **do not copy its values** into the note (that creates a fourth drift source).
+   - **Messy / tribal prose** (plans, scattered rationale): distill durable, reusable facts into atomic **draft** notes in `wiki/_drafts/` (low-trust → PR-promoted), one fact per note, per the `CLAUDE.md` note convention. Skip transient/duplicate content; check `wiki/index.md` first.
+   Re-runs should only process docs changed since the last save (track via a small manifest or the notes' `source:` anchors). Skip if no covered repo's docs changed.
+
+5c. **Refresh the wiki concept graph if `wiki/` notes changed this session** (including any notes 5b just wrote)**.** The vault's own graph (`graphify-out/graph.json`, built over `wiki/`) goes stale when notes are added/edited. If you created or edited any `wiki/` note, rebuild it incrementally:
    ```bash
    graphify wiki --update                                       # re-extracts only changed notes, re-clusters, refreshes graph.json + GRAPH_REPORT.md
    node "${CLAUDE_PLUGIN_ROOT}/bin/build-community-notes.mjs" graphify-out   # refresh the wiki graph's community stubs so its report links resolve

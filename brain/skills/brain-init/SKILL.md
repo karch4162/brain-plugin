@@ -82,7 +82,9 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
    - `BRAIN_ROOT` is the **neutral** contract var (POC §16.1) — the scripts, skills, and any consumer read it. Do not use a consumer-namespaced name.
    - `REPOS_DIR` tells the sync/harvest/freshness scripts where the *code repos* live. **Do not assume a fixed layout** — infer a default (the parent dir of the project being wired, or the vault's parent), **show it, and let the user correct it**, then persist. The scripts also auto-detect repos one or two levels above the vault, so `REPOS_DIR` is only required when checkouts live somewhere non-standard — but persisting it removes the guess. Store it on the vault's registry entry too (`repos_dir`).
 
-7. **Confirm.** Print: the chosen vault (name + path), its governance profile, that `BRAIN_ROOT` is now set for this project, and the next step (`/graphify .` to build this repo's local graph, then `/brain:save` to sync a mirror).
+6b. **Record the graph scope — predetermined per stack, the engineer never picks.** Detect this repo's stack and look up its source roots from the **"Graph scope" table** in the vault's `CLAUDE.md` (Flutter `lib/`; Next `app/ components/ lib/ src/`; React/Node `src/`; Python the importable package dir; Unity `Assets/Scripts/`; …). If the stack is unknown, ask the user **once** for the source roots. **Record them** in the vault `CLAUDE.md` "Repos this brain covers" table (the **Scope** column) for this repo — that's the authoritative, reproducible scope. The build itself happens in `/brain:save` at this recorded scope, code-only (AST) — so it's identical for every teammate and nobody is ever prompted to choose.
+
+7. **Confirm.** Print: the chosen vault (name + path), its governance profile, that `BRAIN_ROOT`/`REPOS_DIR` are wired (machine-local), and the recorded graph scope. **Next step:** `/brain:save` — it builds this repo's code graph at the recorded scope, ingests any changed docs into the wiki, and syncs the mirror. **Do not run raw `/graphify` on the repo** — it would ask you to pick a scope, which the brain has already standardized away.
 
 ## Notes
 

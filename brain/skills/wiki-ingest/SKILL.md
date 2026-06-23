@@ -47,5 +47,6 @@ bin/harvest-chats.mjs   →  chats/<repo>/*.md (status: raw)
 
 ## Notes
 
+- **This skill is the *chats* path.** Repo **docs** (not chat transcripts) are ingested into the wiki by `/brain:save` per the §15.6 split (canonical → link-note; prose → draft note) — don't duplicate that here.
 - Drafts are low-trust by construction: a harvested digest is a lossy, CoT-stripped summary, not ground truth. Always reconcile against the graph/code before a draft becomes a trusted note.
 - `wiki/_drafts/` is excluded from the trusted catalog (`index.md`); don't add draft notes to the index until they're promoted.

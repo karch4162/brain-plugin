@@ -35,7 +35,7 @@ Find your situation, run the commands in order. Legend: **`/brain:*`** = this pl
 
 | Your situation | Run, in order | Notes |
 |---|---|---|
-| **A · New code repo, not yet in a brain** | `/brain:init` → `/graphify .` → *(work)* → `/brain:save` | `init` picks/registers the target vault + wires `BRAIN_ROOT`; `graphify .` builds the local graph the hook & queries use; `save` syncs a mirror into the vault. |
+| **A · New code repo, not yet in a brain** | `/brain:init` → *(work)* → `/brain:save` | `init` picks/registers the vault, wires `BRAIN_ROOT`, and **records the graph scope** (per-stack — you don't pick). `save` builds the code graph **at that scope**, ingests changed docs into the wiki, and syncs the mirror. **Don't run raw `/graphify`** — the brain owns the scoped build. |
 | **B · Repo already linked, but you're on a new machine** | *(prereqs)* → clone the vault locally → `/brain:init` → `/graphify .` *(if no `graphify-out/`)* | Re-run `init`: the binding (`BRAIN_ROOT`) and registry are **per-machine** — `init` writes them to the gitignored `.claude/settings.local.json`, so this never conflicts with the shared repo. |
 | **C · The vault repo itself, on a new machine** | clone the vault → `cd` into it → `/brain:init` | Registers the vault + binds it to itself. Detects the existing `CLAUDE.md`/`wiki/` and **won't overwrite** them. |
 | **D · No vault exists yet (first time ever)** | `/brain:init` → choose **"register a new vault"** → give it a path | Scaffolds the skeleton + query-rule `CLAUDE.md` + governance files. Then onboard code repos via scenario A. |

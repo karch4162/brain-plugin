@@ -27,6 +27,38 @@ When answering questions about the codebase or making changes, resolve context i
   **Always scope by repo** — generic terms collide across repos. Per-repo entry vocabulary lives in `wiki/hot.md`.
 - **Querying the wiki itself as a graph** (step 2): the vault's own concept graph lives at `graphify-out/graph.json` (built over `wiki/`). Run `graphify query "<question>"` from the vault root. Its nodes carry the **code-symbol names** the notes reference, so you can hop from a symbol to its rationale in one query. Rebuild after editing notes with `graphify wiki --update` (see [[save]]).
 
+## Graph scope — the standard (predetermined; do NOT improvise per-repo)
+
+Scope is fixed **per stack**, never an engineer's per-run choice — otherwise the same repo graphs differently depending on who built it and the brain stops being reproducible. **Don't run raw `/graphify` on a covered repo** (it asks you to pick a scope — the thing we're standardizing away); graph builds happen through `/brain:save` (and the first one in `/brain:init`) at the standard scope.
+
+**Two graphs, bridged — keep them separate (§14.2):**
+- **Code graph** (`graphify/<repo>/`) — **app source only, code-only (AST)**. Free + auto-fresh on every commit; that's why it's trustworthy. Mixing in docs/semantic extraction would forfeit it.
+- **Wiki concept graph** (`graphify-out/`) — semantic, over `wiki/` notes whose nodes carry code-symbol names so they bridge into the code graph. Docs/rationale live here and link to code. Refreshed deliberately in `/brain:save`, not per commit.
+
+**Code-graph source roots by stack (everything else is OUT):**
+
+| Stack | Source roots (IN) |
+|---|---|
+| Flutter / Dart | `lib/` |
+| Next.js / TS | `app/` `components/` `lib/` `src/` (whichever exist) |
+| React / JS | `src/` |
+| Node / TS backend | `src/` |
+| Python | the importable package dir(s) |
+| C# / Unity | `Assets/Scripts/` |
+| C# / .NET | `src/` |
+| Go | repo root, minus `vendor/` + `*_test.go` |
+| Unknown | the human picks **once** at `/brain:init`, recorded in the repo table below — never re-asked |
+
+**Always OUT of the code graph:** tests (`test/ tests/ __tests__/ *.test.* *.spec.* *_test.*`); generated/build (`build/ dist/ .next/ .dart_tool/ out/ coverage/ *.g.dart *.freezed.dart`); deps (`node_modules/ vendor/ packages/ .venv/`); platform scaffolding (`ios/ android/ macos/ windows/ linux/ web/`); and **docs/images/video** (the wiki's job, below).
+
+**Tests are OUT (v1)** — they pollute structural queries (test files reference everything) and the *contracts* they pin are captured better in the wiki, with the *why*. Revisit with a separate coverage pass only if "which test pins this rule" becomes a real need.
+
+**Docs → the wiki, handled in `/brain:save` (§15.6 split):**
+- **Canonical / structured docs** (contracts, standards, "drift is a defect" specs): **index + link** — a pointer note with provenance; never copy values into notes (a fourth drift source).
+- **Messy / tribal prose** (plans, scattered rationale): **atomize** into `wiki/_drafts/` notes (low-trust → PR-promoted).
+
+`/brain:save` does this incrementally (only changed docs) — no separate command.
+
 ## Writing to the wiki
 
 - **One fact per note.** Atomic notes, cross-linked with `[[wikilinks]]`.
@@ -50,15 +82,17 @@ When answering questions about the codebase or making changes, resolve context i
 ## Session workflow
 
 - `/brain:resume` — load prior context (`hot.md` + recent `logs/` + relevant notes) before starting work.
-- `/brain:save` — write a dated session log, refresh `hot.md`, append to `wiki/log.md`, sync changed graph mirrors, commit (allowlist only).
+- `/brain:save` — write a dated session log, refresh `hot.md`, append to `wiki/log.md`, (re)build changed repo graphs **at the standard scope**, ingest changed docs into the wiki (§15.6), sync mirrors, refresh the wiki graph, commit (allowlist only). The one end-of-session command.
 - `/brain:freshness` — wiki health check (orphans, dead links, stale `last_verified`, broken `source:`) → a review queue.
 - `/brain:wiki-ingest` — distill harvested chats into draft notes (run the harvest script first).
 
 ## Repos this brain covers
 
-| Area | Repo | Stack | Graph |
-|---|---|---|---|
-| {{area}} | `{{path/to/repo}}` | {{stack}} | `graphify/{{repo}}/graph.json` |
+The **Scope** column is the recorded code-graph scope for each repo (set by `/brain:init` from the per-stack table above) — authoritative, so builds are identical for everyone.
+
+| Area | Repo | Stack | Scope (code-graph roots) | Graph |
+|---|---|---|---|---|
+| {{area}} | `{{path/to/repo}}` | {{stack}} | `{{source roots, e.g. lib/}}` | `graphify/{{repo}}/graph.json` |
 
 Sync all mirrors at once with the plugin's `bin/sync-graph.sh` (run with `BRAIN_ROOT` set to this vault).
 
