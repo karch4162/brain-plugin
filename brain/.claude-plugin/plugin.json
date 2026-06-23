@@ -19,6 +19,5 @@
     "wiki",
     "freshness",
     "provenance"
-  ],
-  "hooks": "./hooks/hooks.json"
+  ]
 }
