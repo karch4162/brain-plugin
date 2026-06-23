@@ -10,6 +10,7 @@ graphify-out/
 Thumbs.db
 *.swp
 
-# Local scratch — never publish harvested transcripts or session logs
-chats/
+# Local scratch — never publish harvested transcripts or session logs.
+# Anchored to repo root so it doesn't swallow templates/vault-skeleton/chats/.gitkeep.
+/chats/
 *.local

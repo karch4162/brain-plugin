@@ -1,0 +1,18 @@
+{
+  "//": "Brain registry (POC §16.2). Canonical location: ~/.claude/brain/registry.json.",
+  "//governance": "Each vault carries its §7 profile — selecting a vault at /brain:init applies its policy to that project's sync. egress: off|anthropic-dpa|allow; access: private|eng-only|public; graphifyignore: default|strict.",
+  "vaults": [
+    {
+      "name": "personal",
+      "path": "/c/Users/me/Projects/AI-OS/personal-brain",
+      "remote": "git@github.com:me/personal-brain.git",
+      "governance": { "egress": "off", "access": "private", "graphifyignore": "default" }
+    },
+    {
+      "name": "tray-brain",
+      "path": "/c/Users/me/Projects/tray-brain",
+      "remote": "git@github.com:vendsy/tray-brain.git",
+      "governance": { "egress": "off", "access": "eng-only", "graphifyignore": "strict" }
+    }
+  ]
+}

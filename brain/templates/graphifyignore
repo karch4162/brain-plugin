@@ -1,0 +1,14 @@
+# .graphifyignore — never feed these to graph extraction.
+# Review changes to this file like you'd review .gitignore changes (POC §7 governance).
+# Egress-off-by-default: graphify processes code locally, but ships docs/markdown to the
+# configured LLM backend — keep anything secret- or PII-shaped out.
+.env
+.env.*
+**/secrets/**
+**/*.pem
+**/*.key
+**/credentials*
+chats/
+logs/
+# Add per-vault exclusions below (e.g. long-form narrative exports that aren't atomic knowledge):
+# docs/<area>/

@@ -1,0 +1,21 @@
+# .saveinclude — the allowlist of paths /brain:save may stage for a direct commit.
+# One path or glob per line; blank lines and # comments are ignored.
+#
+# /brain:save stages ONLY what's listed here — it never runs `git add -A`. This keeps
+# commits intentional and stops private/sensitive content from being published by
+# accident. Customize it to your trust model:
+#   • ADD a path to let /brain:save commit it directly.
+#   • REMOVE (or never list) a path to keep it local / require manual staging.
+#   • Want something kept out entirely? Put it under a gitignored path (e.g. chats/)
+#     or any folder not listed here — /brain:save will leave it in the working tree.
+#
+# Deliberately NOT here:
+#   • chats/              — harvested transcripts are private (also gitignored).
+#   • trusted wiki/ notes — knowledge changes go via PR, staged separately, not /brain:save.
+
+logs/
+wiki/hot.md
+wiki/log.md
+graphify-out/graph.json
+graphify-out/GRAPH_REPORT.md
+graphify-out/manifest.json

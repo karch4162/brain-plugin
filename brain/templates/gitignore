@@ -1,0 +1,16 @@
+# Vault .gitignore (seeded by /brain:init).
+# Harvested transcripts are private staging — never commit them (POC §14.7).
+chats/
+
+# graphify machine-specific scratch (interpreter path, detect/extract temp, cost log).
+# The durable artifacts (graph.json, GRAPH_REPORT.md, manifest.json) ARE committed.
+graphify-out/.graphify_*
+**/.graphify_*
+.graphify_root
+.graphify_python
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.obsidian/workspace*
+node_modules/

@@ -1,0 +1,16 @@
+{
+  "description": "Brain plugin hooks. The graph-before-grep PreToolUse hook is the §14.5 enforcement layer — it is self-gating (silent unless <cwd>/graphify-out/graph.json exists), non-blocking, and is the exact detection signal the §17.2 Track B consumer contract depends on.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Grep|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/graph-before-grep.mjs\""
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,51 @@
+---
+name: wiki-ingest
+description: "Distill harvested Claude Code session digests (chats/) into DRAFT wiki notes for review. The LLM half of the harvest pipeline; honors the POC governance rule that auto-ingested knowledge stays in staging until PR-promoted. Trigger: /brain:wiki-ingest, or 'ingest the harvested chats'."
+---
+
+# /brain:wiki-ingest — distill harvested chats into draft notes
+
+Turns raw harvested session digests into atomic **draft** wiki notes. This is the distill half of the harvest pipeline; the mechanical copy half is `${CLAUDE_PLUGIN_ROOT}/bin/harvest-chats.mjs`. Per POC §8 governance, **auto-ingested knowledge is never written straight into trusted `wiki/` areas** — it lands as drafts in `wiki/_drafts/` and is promoted only by review.
+
+Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).
+
+## Pipeline position
+
+```
+bin/harvest-chats.mjs   →  chats/<repo>/*.md (status: raw)
+        │
+   /brain:wiki-ingest  ──→  wiki/_drafts/*.md (confidence: low, draft)
+        │
+   human/PR review  ─────→  wiki/<area>/*.md (trusted)   ← separate step, not this skill
+```
+
+## What to do when invoked
+
+1. **Find un-ingested digests.** Look in `chats/` for files with `status: raw` in frontmatter (skip `status: ingested`). If the user named a specific file/repo, scope to that. If `chats/` is empty, tell them to run `node "${CLAUDE_PLUGIN_ROOT}/bin/harvest-chats.mjs"` first.
+
+2. **Read the digest(s)** and extract only **durable, reusable facts** — the kind that belong in the brain:
+   - decisions + the *why* (ADR-shaped), gotchas, cross-repo contracts, non-obvious constraints, "we tried X, it failed because Y."
+   - **Skip** transient task chatter, one-off debugging, anything already captured. **Check `wiki/index.md` first** — do not duplicate an existing note; if a digest only refines an existing note, note that instead of making a new one.
+
+3. **Write each fact as a draft note** in `wiki/_drafts/` (create the folder if missing), one fact per file, following the vault's note convention from `CLAUDE.md`:
+   ```yaml
+   ---
+   id: <area-kebab-slug>
+   tags: [<cross-cutting>, <topic>]   # reuse existing tags (see CLAUDE.md vocab), don't coin singletons
+   source: chats/<repo>/<digest>.md  # the session it came from
+   owner: <github-handle>
+   last_verified: <today>
+   confidence: low      # drafts start low; review bumps it
+   draft: true
+   ---
+   ```
+   Body: the atomic fact, cross-linked with `[[wikilinks]]` to related notes. Add the `Code:` community line if it maps to a graph community (see `CLAUDE.md`). Because it's a draft, **flag what still needs verifying against live code** before promotion.
+
+4. **Mark the digest ingested.** Flip its frontmatter `status: raw` → `status: ingested` so the next run skips it.
+
+5. **Report** a promotion queue: list the draft notes created, each with a one-line "promote / merge into [[existing]] / drop" recommendation. Do **not** move drafts into trusted areas yourself — that's the reviewed PR step.
+
+## Notes
+
+- Drafts are low-trust by construction: a harvested digest is a lossy, CoT-stripped summary, not ground truth. Always reconcile against the graph/code before a draft becomes a trusted note.
+- `wiki/_drafts/` is excluded from the trusted catalog (`index.md`); don't add draft notes to the index until they're promoted.
