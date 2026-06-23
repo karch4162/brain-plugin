@@ -1,6 +1,6 @@
-# tray-brain-plugin
+# brain-plugin
 
-> **Status:** extracted + cold-install-validated (POC §17.2 steps 2–3). **§17.1 checkbox 1 (packaging/isolation) MET** — `/brain:freshness` ran end-to-end through a live `--plugin-dir` install (slash command → skill → bundled `bin/` script → report). Remaining gate: §10 eval on a real Tray repo (checkbox 2 = the go/no-go for teams).
+> **Status:** extracted + cold-install-validated (POC §17.2 steps 2–3). **§17.1 checkbox 1 (packaging/isolation) MET** — `/brain:freshness` ran end-to-end through a live `--plugin-dir` install (slash command → skill → bundled `bin/` script → report). Remaining gate: §10 eval on a real  repo (checkbox 2 = the go/no-go for teams).
 > **Folder/repo name is provisional** — confirm before the first push to vendsy git.
 
 Development repo for the standalone Claude Code **brain plugin** (POC §16): the knowledge
@@ -15,7 +15,7 @@ are *consumers* that depend on it, never the reverse.
 ## Layout
 
 ```
-tray-brain-plugin/                  # this repo (marketplace wrapper)
+-brain-plugin/                  # this repo (marketplace wrapper)
 ├── .claude-plugin/marketplace.json # marketplace manifest
 └── brain/                          # the plugin (name: "brain")
     ├── .claude-plugin/plugin.json
@@ -34,7 +34,7 @@ Mirrors the `ai-agent-manager` plugin (the reference consumer): marketplace wrap
 
 | Decision | Choice | Why |
 |---|---|---|
-| Plugin name | **`brain`** (neutral, not Tray-branded) | serves the personal pilot *and* `tray-brain` from one install (§16.2) |
+| Plugin name | **`brain`** (neutral, not -branded) | serves the personal pilot *and* `-brain` from one install (§16.2) |
 | Vault location contract | env var **`BRAIN_ROOT`** (→ `$CLAUDE_PROJECT_DIR` → cwd) | neutral name the consumer reads (§16.1); scripts live outside the vault now, so they can't self-locate it |
 | graphify | **delegated** (`uv tool install graphifyy`), not vendored | one-installer rule (§16.1) |
 | Always-on query rule | shipped as `templates/CLAUDE.brain.md`, written into the vault `CLAUDE.md` by `/brain:init` | plugins can't ship an always-on `CLAUDE.md`; matches the pilot + the §17.2 diff target |
