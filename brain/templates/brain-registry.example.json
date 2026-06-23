@@ -6,6 +6,7 @@
       "name": "personal",
       "path": "/c/Users/me/Projects/AI-OS/personal-brain",
       "remote": "git@github.com:me/personal-brain.git",
+      "repos_dir": "/c/Users/me/Projects",
       "governance": { "egress": "off", "access": "private", "graphifyignore": "default" }
     },
     {

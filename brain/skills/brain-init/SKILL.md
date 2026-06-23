@@ -64,9 +64,10 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
 6. **Wire this project to the vault.** Persist the binding so every session here resolves it — merge into this project's `.claude/settings.json` (create if missing), preserving any existing keys:
    ```json
-   { "env": { "BRAIN_ROOT": "<absolute vault path>" } }
+   { "env": { "BRAIN_ROOT": "<absolute vault path>", "REPOS_DIR": "<where the vault's mirrored repos are checked out>" } }
    ```
-   `BRAIN_ROOT` is the **neutral** contract var (POC §16.1) — the scripts, skills, and any consumer read it. Do not use a consumer-namespaced name.
+   - `BRAIN_ROOT` is the **neutral** contract var (POC §16.1) — the scripts, skills, and any consumer read it. Do not use a consumer-namespaced name.
+   - `REPOS_DIR` tells the sync/harvest/freshness scripts where the *code repos* live. **Do not assume a fixed layout** — infer a default (the parent dir of the project being wired, or the vault's parent), **show it, and let the user correct it**, then persist. The scripts also auto-detect repos one or two levels above the vault, so `REPOS_DIR` is only required when checkouts live somewhere non-standard — but persisting it removes the guess. Store it on the vault's registry entry too (`repos_dir`).
 
 7. **Confirm.** Print: the chosen vault (name + path), its governance profile, that `BRAIN_ROOT` is now set for this project, and the next step (`/graphify .` to build this repo's local graph, then `/brain:save` to sync a mirror).
 

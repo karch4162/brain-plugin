@@ -46,12 +46,16 @@ See `../AI-OS/personal-brain/INSTALL_BASELINE.md` §D. Reproduced here: **A** (s
 skeleton), **B1/B2** (hook now plugin-shipped), **B6** (registry format + `/brain:init` flow). Still
 delegated/external: **B3** graphify skill, **B4** graphify CLI. **B5** `BRAIN_ROOT` named + emitted.
 
-## Open validation items (for step 3 cold-install + structural diff)
+## Step-3 validation status (cold-install + structural diff)
 
-1. **Script-invocation path** — skills call `node "${CLAUDE_PLUGIN_ROOT}/bin/…"`; confirm `${CLAUDE_PLUGIN_ROOT}` expands in the Bash tool when a plugin skill runs (vs. needing PATH/an absolute path).
-2. **`harvest-chats.mjs` path encoding** — the generic `path→projects-dir` encoding (`[:\\/]`→`-`) must match Claude Code's real folder names on the target OS; most environment-coupled script.
-3. **`/brain:init` registry + vault selection** — the §16.2 "least-proven piece"; exercise against a throwaway `tray-brain-test` vault.
-4. **Global-hook isolation gotcha (§17.2)** — verify the now-plugin-shipped hook removes the pilot's global-config-mutation problem.
-5. **Track B handshake** — confirm `BRAIN_ROOT` + the `graphify-out/graph.json` detection signal match what `ai-agent-manager` reads.
+| # | Item | Status |
+|---|---|---|
+| 1 | **`${CLAUDE_PLUGIN_ROOT}` expansion** in the Bash tool when a plugin *skill* invokes `node "${CLAUDE_PLUGIN_ROOT}/bin/…"` | ⏳ **open** — needs a live `claude --plugin-dir` install to confirm (vs. needing PATH / an absolute path). The one genuinely untested mechanism. |
+| 2 | **`harvest-chats.mjs` path→projects-dir encoding** matches the OS | ✅ validated — identical real harvest results to the pilot on Windows |
+| 3 | **Genericized bin scripts preserve behavior** | ✅ validated — `freshness` output byte-identical to the pilot (with + without explicit `REPOS_DIR`) |
+| 4 | **No fixed-layout assumption** (repos location) | ✅ fixed + validated — auto-detects repos 1–2 levels above the vault; `REPOS_DIR` override persisted by `/brain:init`. Caught a 0→35 false-positive on the original guess. |
+| 5 | **Vault scaffold reproduction** (skeleton + governance files) | ✅ validated — structural diff vs pilot is clean; vault `.gitignore` keeps `chats/` private |
+| 6 | **Global-hook isolation gotcha (§17.2)** | ✅ resolved by design — hook is plugin-shipped, no global `settings.json` mutation |
+| 7 | **Track B handshake** | ✅ simplified — consumer does graphify-detection first, `BRAIN_ROOT` second, its own memory as fallback; this plugin emits both signals |
 
-Will be committed to vendsy git when validation clears.
+Remaining before vendsy push: a live plugin install to close item #1, and the expensive full graph-content regen (explicitly **not** a diff target — content is user-owned, §17.2).

@@ -22,7 +22,18 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VAULT="${BRAIN_ROOT:-${CLAUDE_PROJECT_DIR:-$PWD}}"
-REPOS_DIR="${REPOS_DIR:-$VAULT/..}"
+
+# Where the covered repos are checked out — explicit REPOS_DIR, else auto-detect the two
+# common layouts (repos one or two levels above the vault). No fixed-layout assumption.
+if [[ -z "${REPOS_DIR:-}" ]]; then
+  REPOS_DIR="$VAULT/.."
+  for cand in "$VAULT/.." "$VAULT/../.."; do
+    for d in "$VAULT"/graphify/*/; do
+      [[ -d "$d" ]] || continue
+      if [[ -d "$cand/$(basename "$d")" ]]; then REPOS_DIR="$cand"; break 2; fi
+    done
+  done
+fi
 
 if [[ ! -d "$VAULT/graphify" && ! -d "$VAULT/wiki" ]]; then
   echo "error: '$VAULT' doesn't look like a brain vault (no graphify/ or wiki/). Set BRAIN_ROOT." >&2

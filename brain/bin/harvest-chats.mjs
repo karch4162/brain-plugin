@@ -31,9 +31,6 @@ const argVal = (flag) => (argv.indexOf(flag) >= 0 ? argv[argv.indexOf(flag) + 1]
 const VAULT = argVal('--vault') || process.env.BRAIN_ROOT || process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const HOME = process.env.HOME || process.env.USERPROFILE;
 const PROJECTS = join(HOME, '.claude', 'projects');
-const REPOS_DIR = process.env.REPOS_DIR
-  ? process.env.REPOS_DIR.replace(/^~/, HOME || '~')
-  : join(VAULT, '..');
 
 const DRY = argv.includes('--dry-run');
 const INCLUDE_PARENT = argv.includes('--include-parent');
@@ -55,6 +52,12 @@ const encode = (p) => resolve(p).replace(/[:\\/]/g, '-');
 const COVERED = existsSync(join(VAULT, 'graphify'))
   ? readdirSync(join(VAULT, 'graphify'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)
   : [];
+
+// Where the covered repos are checked out — explicit REPOS_DIR, else auto-detect the two
+// common layouts (repos one or two levels above the vault). No fixed-layout assumption.
+const REPOS_DIR = process.env.REPOS_DIR
+  ? process.env.REPOS_DIR.replace(/^~/, HOME || '~')
+  : ([join(VAULT, '..'), join(VAULT, '..', '..')].find((c) => COVERED.some((r) => existsSync(join(c, r)))) || join(VAULT, '..'));
 
 const sources = COVERED.map((r) => ({ label: r, enc: encode(join(REPOS_DIR, r)) }));
 // the vault itself (its own sessions — e.g. ventures / brain-maintenance work)

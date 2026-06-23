@@ -30,9 +30,7 @@ const argv = process.argv.slice(2);
 const argVal = (flag) => (argv.indexOf(flag) >= 0 ? argv[argv.indexOf(flag) + 1] : undefined);
 
 const VAULT = argVal('--vault') || process.env.BRAIN_ROOT || process.env.CLAUDE_PROJECT_DIR || process.cwd();
-const REPOS_DIR = process.env.REPOS_DIR
-  ? process.env.REPOS_DIR.replace(/^~/, process.env.HOME || process.env.USERPROFILE || '~')
-  : join(VAULT, '..');
+const HOME = process.env.HOME || process.env.USERPROFILE || '~';
 
 const STALE_DAYS = Number(argVal('--stale-days')) || 45;
 const TO_STDOUT = argv.includes('--stdout');
@@ -46,6 +44,19 @@ if (!existsSync(join(VAULT, 'wiki'))) {
 const COVERED = existsSync(join(VAULT, 'graphify'))
   ? readdirSync(join(VAULT, 'graphify'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)
   : [];
+
+// Where the covered repos are checked out. Never assume a fixed layout: honor an
+// explicit REPOS_DIR, else auto-detect the two common layouts (repos one or two levels
+// above the vault) by checking which actually contains a covered repo. Persist a real
+// REPOS_DIR via /brain:init for anything non-standard.
+const REPOS_DIR = resolveReposDir(VAULT, COVERED);
+function resolveReposDir(vault, covered) {
+  if (process.env.REPOS_DIR) return process.env.REPOS_DIR.replace(/^~/, HOME);
+  for (const c of [join(vault, '..'), join(vault, '..', '..')]) {
+    if (covered.some((r) => existsSync(join(c, r)))) return c;
+  }
+  return join(vault, '..');
+}
 
 // ---- collect markdown files --------------------------------------------------
 function walk(dir, acc = []) {
