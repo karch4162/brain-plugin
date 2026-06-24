@@ -25,7 +25,7 @@ When answering questions about the codebase or making changes, resolve context i
   graphify path "<A>" "<B>"   --graph graphify/<repo>/graph.json
   ```
   **Always scope by repo** — generic terms collide across repos. Per-repo entry vocabulary lives in `wiki/hot.md`.
-- **Querying the wiki itself as a graph** (step 2): the vault's own concept graph lives at `graphify-out/graph.json` (built over `wiki/`). Run `graphify query "<question>"` from the vault root. Its nodes carry the **code-symbol names** the notes reference, so you can hop from a symbol to its rationale in one query. Rebuild after editing notes with `graphify wiki --update` (see [[save]]).
+- **Querying the wiki itself as a graph** (step 2): the vault's own concept graph lives at `graphify-out/graph.json` (built over `wiki/`). Run `graphify query "<question>"` from the vault root. Its nodes carry the **code-symbol names** the notes reference, so you can hop from a symbol to its rationale in one query. Rebuild after editing notes via the **`/graphify` skill** (`/graphify wiki --update` — host-session extraction, keyless), **not** the bare `graphify` CLI; [[save]] does this in step 5c.
 
 ## Graph scope — the standard (predetermined; do NOT improvise per-repo)
 

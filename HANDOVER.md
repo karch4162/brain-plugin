@@ -35,7 +35,7 @@ The design spec ("the POC") is the source of truth: `AI-OS/personal-brain/docs/s
 
 ## Punch-list (open; none blocking)
 **Plugin refinements (all sourced from real dogfood use):**
-1. **Route the wiki concept-graph build through the host Claude session** so it builds keyless wherever Claude Code runs. Today `graphify wiki --update` (CLI) needs a GEMINI/ANTHROPIC key or local ollama (§7) → the concept-graph layer doesn't build in keyless envs. *Highest value.*
+1. ✅ **DONE (2026-06-23)** — **Route the wiki concept-graph build through the host Claude session** so it builds keyless. `/brain:save` step 5c now delegates to the **`/graphify` _skill_** (`/graphify wiki --update`), whose host-session subagent dispatch does the prose semantic extraction with no GEMINI/ANTHROPIC key (graphify SKILL Step 3 Part B), instead of shelling out to the API-keyed `graphify` CLI binary. Same correction mirrored in `templates/CLAUDE.brain.md`. The keyless path already existed in graphify; the bug was brain calling the CLI not the skill.
 2. **Offer the initial wiki seed at `/brain:init`** (currently it's stumbled-into via `/save`, which gates it behind "session had work").
 3. **`/brain:init` remote handling:** match the user's git protocol (HTTPS vs SSH) + offer `gh repo create` (the SSH-remote headache).
 4. **Backfill `personal-brain/CLAUDE.md`** with the scope policy + a Scope column (spawned as chip `task_85cb7ef2`); verify volleyball-stats' real source root (top-level showed `app/`, not `lib/`).
