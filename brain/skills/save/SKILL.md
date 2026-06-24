@@ -43,17 +43,18 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    - <date> — <one-line summary of what this session changed in the vault>.
    ```
 
-5. **(Re)build changed repo graphs at the standard scope, then sync mirrors.** A *covered repo* is any repo with a mirror folder under `graphify/<repo>/`. For each covered repo whose **source** changed this session:
-   - **Build at the recorded scope, code-only (AST), incrementally — never prompt for scope.** Read the repo's scope from the vault `CLAUDE.md` "Repos this brain covers" table (e.g. `lib/`) and rebuild over exactly those source roots:
+5. **Build repo graphs at the standard scope, then sync mirrors.** A *covered repo* is any repo that has a mirror folder under `graphify/<repo>/` **or** is listed in the vault `CLAUDE.md` "Repos this brain covers" table — the latter catches a freshly-`/brain:init`-ed repo whose **first** graph hasn't been built yet (this is the seed `/brain:init` offers; `/brain:save` is the one place builds actually run). Build a covered repo when its **source changed this session** *or* it has **no graph yet** (first build / seed):
+   - **Build at the recorded scope, code-only (AST), never prompt for scope.** Read the repo's scope from the vault `CLAUDE.md` "Repos this brain covers" table (e.g. `lib/`) and build over exactly those source roots. Do a **full build on the first run** (no `graphify-out/graph.json` in the repo yet) and an **incremental `--update`** every time after:
      ```bash
-     ( cd "$REPOS_DIR/<repo>" && graphify <source-roots> --update )   # code-only ⇒ pure AST, free/fast, no subagents, no scope prompt
+     ( cd "$REPOS_DIR/<repo>" && graphify <source-roots> )            # FIRST build (no graphify-out/ yet): full AST extraction, creates the graph
+     ( cd "$REPOS_DIR/<repo>" && graphify <source-roots> --update )   # thereafter: incremental ⇒ pure AST, free/fast, no subagents, no scope prompt
      ```
-     The scope is predetermined (CLAUDE.md) — do **not** ask the user to choose, and do **not** run `graphify .` (that pulls in tests/docs/platform/deps and triggers the "pick a subfolder" prompt). Tests/docs/platform/deps are excluded simply by being outside the source roots.
+     The scope is predetermined (CLAUDE.md) — do **not** ask the user to choose, and do **not** run `graphify .` (that pulls in tests/docs/platform/deps and triggers the "pick a subfolder" prompt). Tests/docs/platform/deps are excluded simply by being outside the source roots. Both forms are code-only (AST): free, fast, keyless.
    - **Sync the mirrors:**
      ```bash
-     bash "${CLAUDE_PLUGIN_ROOT}/bin/sync-graph.sh"      # syncs every covered repo whose graph differs from the mirror
+     bash "${CLAUDE_PLUGIN_ROOT}/bin/sync-graph.sh"      # copies each repo's graphify-out → graphify/<repo>/ (creates the mirror on first sync)
      ```
-   (Run from the vault root, or with `BRAIN_ROOT=<vault>` set. Sync is a no-op for unchanged repos and writes its own `log.md` line + commit.) Skip if no covered repo's source changed.
+   (Run from the vault root, or with `BRAIN_ROOT=<vault>` set. Sync is a no-op for unchanged repos and writes its own `log.md` line + commit.) Skip if no covered repo's source changed **and** every covered repo already has a graph.
 
 5b. **Ingest changed repo docs into the wiki (§15.6 split) — incremental, the standard docs→wiki path (no separate command).** For each covered repo, check its `docs/` + `README` + top-level design docs for files changed since the last save. By type:
    - **Canonical / structured** (contracts, standards, machine-readable specs, "drift is a defect" docs): create/update a **link-note** in `wiki/<area>/` that *points at* the doc (`source:` anchor + provenance) and summarizes what it governs — **do not copy its values** into the note (that creates a fourth drift source).
@@ -92,4 +93,5 @@ Committed locally (not pushed). Open loops carried forward: <n>
 ## Notes
 
 - One log per session; if `/brain:save` runs twice in a day, append to or supersede the existing dated log rather than creating a collision.
+- **`/brain:save` is also the seed mechanism.** `/brain:init` offers to run it for the **first** build (step 5 treats a scope-table repo with no graph yet as a first/full build). So the first invocation may be a seed, not an end-of-session save — the log slug should reflect that ("seed brain for <repo>").
 - The mirror of this is [[resume]].

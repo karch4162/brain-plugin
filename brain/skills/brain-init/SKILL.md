@@ -87,7 +87,13 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
 6b. **Record the graph scope — predetermined per stack, the engineer never picks.** Detect this repo's stack and look up its source roots from the **"Graph scope" table** in the vault's `CLAUDE.md` (Flutter `lib/`; Next `app/ components/ lib/ src/`; React/Node `src/`; Python the importable package dir; Unity `Assets/Scripts/`; …). If the stack is unknown, ask the user **once** for the source roots. **Record them** in the vault `CLAUDE.md` "Repos this brain covers" table (the **Scope** column) for this repo — that's the authoritative, reproducible scope. The build itself happens in `/brain:save` at this recorded scope, code-only (AST) — so it's identical for every teammate and nobody is ever prompted to choose.
 
-7. **Confirm.** Print: the chosen vault (name + path), its governance profile, that `BRAIN_ROOT`/`REPOS_DIR` are wired (machine-local), and the recorded graph scope. **Next step:** `/brain:save` — it builds this repo's code graph at the recorded scope, ingests any changed docs into the wiki, and syncs the mirror. **Do not run raw `/graphify` on the repo** — it would ask you to pick a scope, which the brain has already standardized away.
+7. **Offer to seed the brain now (the first build).** Scaffolding + wiring alone leaves the vault **empty** — no code-graph mirror, no wiki notes — so it's useless to the next `/brain:resume` or query until something builds. Don't make the user stumble into that via a later `/brain:save`; **offer it here**, explicitly, via `AskUserQuestion`:
+   - **Seed now (recommend as the default):** run `/brain:save` immediately. With the scope recorded in 6b, save does the **first** build end-to-end — builds this repo's code graph at the recorded scope (full AST, keyless), syncs the mirror into `graphify/<repo>/`, ingests **all** of the repo's docs into the wiki (§15.6 first-ingest), builds the wiki concept graph (keyless, via the `/graphify` skill), and commits. Save now recognizes a scope-table repo with no graph yet as a first build, so this works on a fresh vault (it didn't before — that was the "stumbled-into via save" gap).
+   - **Later:** skip the build; tell the user to run `/brain:save` when ready — it will detect the un-built repo and seed it then.
+
+   Call this out as a real choice because the first build can take a few minutes on a large repo (the docs-ingest dispatches subagents). Don't auto-run it silently.
+
+8. **Confirm.** Print: the chosen vault (name + path), its governance profile, that `BRAIN_ROOT`/`REPOS_DIR` are wired (machine-local), the recorded graph scope, and **whether the brain was seeded just now or is still empty pending `/brain:save`**. If seeded, the vault is ready to `/brain:resume` and query; if deferred, the next step is `/brain:save`. **Do not run raw `/graphify` on the repo** — it would ask you to pick a scope, which the brain has already standardized away.
 
 ## Notes
 
