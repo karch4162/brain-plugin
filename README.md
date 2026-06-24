@@ -19,8 +19,8 @@ are *consumers* that depend on it, never the reverse.
 ├── .claude-plugin/marketplace.json # marketplace manifest
 └── brain/                          # the plugin (name: "brain")
     ├── .claude-plugin/plugin.json
-    ├── commands/{save,resume,freshness,wiki-ingest,init}.md   # user-typed /brain:* slash entry points
-    ├── skills/{save,resume,freshness,wiki-ingest,brain-init}/SKILL.md   # authority + model-invoked
+    ├── commands/{save,resume,freshness,wiki-ingest,init,doctor}.md   # user-typed /brain:* slash entry points
+    ├── skills/{save,resume,freshness,wiki-ingest,brain-init,doctor}/SKILL.md   # authority + model-invoked
     ├── hooks/{hooks.json, graph-before-grep.mjs}
     ├── bin/{sync-graph.sh, freshness.mjs, build-community-notes.mjs, harvest-chats.mjs}
     └── templates/{CLAUDE.brain.md, graphifyignore, saveinclude, gitignore,
@@ -29,6 +29,38 @@ are *consumers* that depend on it, never the reverse.
 
 Mirrors the `ai-agent-manager` plugin (the reference consumer): marketplace wrapper + nested plugin,
 `${CLAUDE_PLUGIN_ROOT}` for runtime paths. `claude plugin validate ./brain` passes.
+
+## Developing & releasing the plugin
+
+**Local dev loop (live, no reinstall).** This repo is a *directory marketplace*. To iterate with your
+edits live, launch Claude Code with the plugin loaded straight from the source dir:
+
+```bash
+claude --plugin-dir ./brain
+```
+
+After editing a skill or hook, run `/reload-plugins` to pick the change up **without restarting**
+(skills + hooks reload in-session; brain ships no monitors, so no restart is needed).
+
+**⚠ Bump the version on every release — installs freeze silently otherwise.** Marketplace plugins are
+*copied* into `~/.claude/plugins/cache/`, and `claude plugin update` keys off the `version` string. If
+you ship behavior changes but leave `version` untouched, `update` reports *"already at the latest
+version"* and every installed copy stays frozen at the commit it was first installed from —
+`claude plugin marketplace update` does **not** refresh the cached copy either. So on every release:
+
+1. Bump `version` in **both** `brain/.claude-plugin/plugin.json` **and** the matching entry in
+   `.claude-plugin/marketplace.json` — they must agree (`claude plugin tag` validates this).
+2. Tag the release: `claude plugin tag ./brain` (creates a `brain--v<version>` git tag).
+3. Commit via the branch → PR flow (the `main`-push guardrail; see HANDOVER).
+
+**Forcing a stale install current (no version bump).** Mid-dev, if a cache is stale and you don't want
+to bump, uninstall + reinstall forces a fresh copy from source — `claude plugin update` alone will
+**not** when the version is unchanged:
+
+```bash
+claude plugin uninstall brain@brain-marketplace
+claude plugin install   brain@brain-marketplace   # then /reload-plugins (or restart)
+```
 
 ## Design decisions taken in extraction
 
