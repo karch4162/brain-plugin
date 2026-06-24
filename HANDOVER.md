@@ -1,6 +1,6 @@
 # Brain plugin — session handover
 
-> Distilled state for a fresh session or teammate picking this up. Last updated **2026-06-23**.
+> Distilled state for a fresh session or teammate picking this up. Last updated **2026-06-24**. Plugin version **0.2.0**.
 
 ## What this is
 **brain** is a Claude Code plugin: a git-backed, agent-queryable **knowledge substrate** (Graphify
@@ -40,6 +40,8 @@ The design spec ("the POC") is the source of truth: `AI-OS/personal-brain/docs/s
 3. **`/brain:init` remote handling:** match the user's git protocol (HTTPS vs SSH) + offer `gh repo create` (the SSH-remote headache).
 4. **Backfill `personal-brain/CLAUDE.md`** with the scope policy + a Scope column (spawned as chip `task_85cb7ef2`); verify volleyball-stats' real source root (top-level showed `app/`, not `lib/`).
 5. (Consider) a `/brain:promote` helper for the draft→trusted move.
+6. ✅ **DONE (2026-06-24)** — **Version-per-release discipline.** A *directory-marketplace* install is a cached **copy**; `claude plugin update` keys off the `version` string, so shipping behavior changes without bumping `version` silently freezes every install at its first-installed commit (`marketplace update` doesn't refresh the cache; `plugin update` reports "already at latest"). Bumped `plugin.json` + `marketplace.json` to **0.2.0** (must agree). Release flow now: bump both → `claude plugin tag ./brain` → branch/PR. Discovered when the installed plugin was found pinned to `1ec0d07`, 11 commits behind `main`, missing both features *and* `/brain:doctor`.
+7. ✅ **DONE (2026-06-24)** — **Document the dev loop** in README: `claude --plugin-dir ./brain` + `/reload-plugins` for live iteration, and the `uninstall`+`install` fallback to force a stale cache current without a version bump.
 
 **Vault tasks (Mason):** promote the 8 `tray-brain` drafts → trusted `wiki/` via PR + `index.md`; fix the `owner:` placeholder; push `tray-brain` (`git push origin main` — remote is HTTPS now) and `brain-plugin` `origin` (the user's settings deny-rule blocks *agent* pushes to `origin main`).
 
