@@ -70,7 +70,10 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
    cp "${CLAUDE_PLUGIN_ROOT}/templates/saveinclude"     "<vault>/.saveinclude"
    cp "${CLAUDE_PLUGIN_ROOT}/templates/gitignore"       "<vault>/.gitignore"
    ```
-   Substitute the skeleton placeholders (`{{VAULT_NAME}}`, `{{DATE}}`, `{{area}}`). Write the **3-step query rule** into `CLAUDE.md` by copying `${CLAUDE_PLUGIN_ROOT}/templates/CLAUDE.brain.md` (it's absent in a new vault). `git init` if not a repo.
+   Substitute the skeleton placeholders (`{{VAULT_NAME}}`, `{{DATE}}`, `{{area}}`). Write the **3-step query rule** into `CLAUDE.md` by copying `${CLAUDE_PLUGIN_ROOT}/templates/CLAUDE.brain.md` (it's absent in a new vault). `git init` if not a repo, then **commit the scaffolding so the vault is reproducible from the start** — these governance/skeleton files are NOT in `.saveinclude` (that allowlist is for session output), so `/brain:save` will never stage them; they must be committed here:
+   ```bash
+   ( cd "<vault>" && git add -A && git commit -m "chore: scaffold brain vault" )   # .gitignore is in place, so chats/ + machine files stay excluded
+   ```
 
    In **both** cases, append the vault to the registry with its governance profile.
 

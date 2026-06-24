@@ -58,14 +58,20 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 5b. **Ingest changed repo docs into the wiki (§15.6 split) — incremental, the standard docs→wiki path (no separate command).** For each covered repo, check its `docs/` + `README` + top-level design docs for files changed since the last save. By type:
    - **Canonical / structured** (contracts, standards, machine-readable specs, "drift is a defect" docs): create/update a **link-note** in `wiki/<area>/` that *points at* the doc (`source:` anchor + provenance) and summarizes what it governs — **do not copy its values** into the note (that creates a fourth drift source).
    - **Messy / tribal prose** (plans, scattered rationale): distill durable, reusable facts into atomic **draft** notes in `wiki/_drafts/` (low-trust → PR-promoted), one fact per note, per the `CLAUDE.md` note convention. Skip transient/duplicate content; check `wiki/index.md` first.
-   Re-runs should only process docs changed since the last save (track via a small manifest or the notes' `source:` anchors). Skip if no covered repo's docs changed.
+   **First ingest for a repo** (no link-notes / draft notes derived from its docs exist yet — e.g. a freshly onboarded repo): ingest **all** of its docs, not just recently-modified ones. **Thereafter:** only docs changed since the last ingest (track via a small manifest or the notes' `source:` anchors). Docs-ingest is **independent of code changes** — a repo whose source didn't change this session can still have un-ingested docs; don't gate it on "source changed." Skip only if every covered repo's docs are already fully ingested and unchanged.
 
-5c. **Refresh the wiki concept graph if `wiki/` notes changed this session** (including any notes 5b just wrote)**.** The vault's own graph (`graphify-out/graph.json`, built over `wiki/`) goes stale when notes are added/edited. If you created or edited any `wiki/` note, rebuild it incrementally:
-   ```bash
-   graphify wiki --update                                       # re-extracts only changed notes, re-clusters, refreshes graph.json + GRAPH_REPORT.md
-   node "${CLAUDE_PLUGIN_ROOT}/bin/build-community-notes.mjs" graphify-out   # refresh the wiki graph's community stubs so its report links resolve
-   ```
-   This is the agent-driven refresh (doc changes need the LLM extraction pass; it's not a free git-hook rebuild like the code graphs). The semantic cache means only changed notes re-extract. Skip if no `wiki/` note changed. Commit `graphify-out/graph.json` + `GRAPH_REPORT.md` + `graphify-out/communities/` with the rest (the machine-specific `.graphify_*` files are gitignored).
+5c. **Refresh the wiki concept graph if `wiki/` notes changed this session** (including any notes 5b just wrote)**.** The vault's own graph (`graphify-out/graph.json`, built over `wiki/`) goes stale when notes are added/edited. This refresh is **agent-driven**: unlike the code graphs (free, pure-AST, auto-fresh on every commit), prose notes need an LLM extraction pass. Run that pass **through the graphify _skill_ — this host session is the LLM** — never through the bare CLI:
+   - **Invoke the graphify skill on `wiki/`.** From the vault root, run the skill (`Skill` tool, `skill: "graphify"`) scoped to the `wiki/` folder — **incremental** if a wiki graph already exists, **full** on the first build:
+     - If `graphify-out/graph.json` exists → argument `wiki --update` (the `--update` flow; only changed notes re-extract via the semantic cache).
+     - If it does **not** exist (first-ever wiki build for this vault) → argument `wiki` (a full build; `--update` has no baseline to diff against and would no-op).
+
+     Because a stock Claude Code env sets **no** `GEMINI_API_KEY`/`GOOGLE_API_KEY`, the skill falls straight through to **host-session subagent dispatch** (graphify SKILL.md Step 3 Part B) for the notes' semantic extraction. This builds **keyless** — no `GEMINI`/`ANTHROPIC` key and no local ollama required. graphify does **not** read `ANTHROPIC_API_KEY`; if anything prompts for one, that's a misread of the graphify skill — ignore it.
+   - **Do NOT shell out to the bare `graphify wiki --update` CLI binary.** That entrypoint sends prose semantic extraction to an API-keyed backend (gemini/openai/…); in a keyless env it can't build the concept-graph layer — the exact gap this step exists to close. The distinction is the leading slash: the **`/graphify` skill** (host session) is keyless; the **`graphify` binary** is not, for prose.
+   - **Then refresh the wiki graph's community stubs** so its report links resolve:
+     ```bash
+     node "${CLAUDE_PLUGIN_ROOT}/bin/build-community-notes.mjs" graphify-out
+     ```
+   Skip if no `wiki/` note changed. Commit `graphify-out/graph.json` + `GRAPH_REPORT.md` + `graphify-out/communities/` with the rest (the machine-specific `.graphify_*` files are gitignored).
 
 6. **Commit only the `.saveinclude` allowlist.** `/brain:save` **never** runs `git add -A`. Stage exactly the paths listed in `.saveinclude` (one path/glob per line; `#` comments and blank lines ignored), so private content — harvested `chats/` (also gitignored), or anything kept off the list — is never published by accident:
    ```bash
