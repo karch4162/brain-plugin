@@ -46,12 +46,21 @@ After editing a skill or hook, run `/reload-plugins` to pick the change up **wit
 *copied* into `~/.claude/plugins/cache/`, and `claude plugin update` keys off the `version` string. If
 you ship behavior changes but leave `version` untouched, `update` reports *"already at the latest
 version"* and every installed copy stays frozen at the commit it was first installed from —
-`claude plugin marketplace update` does **not** refresh the cached copy either. So on every release:
+`claude plugin marketplace update` does **not** refresh the cached copy either.
 
-1. Bump `version` in **both** `brain/.claude-plugin/plugin.json` **and** the matching entry in
-   `.claude-plugin/marketplace.json` — they must agree (`claude plugin tag` validates this).
-2. Tag the release: `claude plugin tag ./brain` (creates a `brain--v<version>` git tag).
+**Version lives in ONE place: `brain/.claude-plugin/plugin.json`.** Claude Code resolves a plugin's
+version from `plugin.json` first, then the marketplace entry, then the commit SHA — so the
+`.claude-plugin/marketplace.json` entry deliberately **omits** `version` to avoid a second field to
+keep in sync. On every release:
+
+1. Bump `version` in **`brain/.claude-plugin/plugin.json` only**.
+2. Tag the release: `claude plugin tag ./brain` (creates a `brain--v<version>` git tag — it tags the
+   current version, it does **not** bump for you; there's no `npm version` equivalent).
 3. Commit via the branch → PR flow (the `main`-push guardrail; see HANDOVER).
+
+Consumers then pick it up with `claude plugin marketplace update` → `claude plugin update brain@brain-marketplace`
+(→ `/reload-plugins` or restart). *(Trade-off: an omitted marketplace `version` means the plugin's
+metadata isn't shown in the pre-install browse UI — fine for this private, known-audience marketplace.)*
 
 **Forcing a stale install current (no version bump).** Mid-dev, if a cache is stale and you don't want
 to bump, uninstall + reinstall forces a fresh copy from source — `claude plugin update` alone will
