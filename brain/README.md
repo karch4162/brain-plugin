@@ -45,6 +45,39 @@ Find your situation, run the commands in order. Legend: **`/brain:*`** = this pl
 
 > **Per-machine, not per-clone:** the vault binding and registry (`~/.claude/brain/registry.json`) are machine-specific. Cloning a linked repo onto a new laptop always needs one `/brain:init` re-run (scenario B) — it's quick, non-destructive, and writes only to the gitignored local override.
 
+## Working with the wiki
+
+The wiki (`wiki/` in the vault) is the **why** layer — decisions, gotchas, contracts — that code can't tell you. It's deliberately **two-tier and human-gated**: agents and ingest pipelines write **low-trust drafts**; people promote the keepers to **trusted** notes via PR. That gate is the whole point — it keeps auto-captured knowledge from silently hardening into "fact." Anyone on the team can review and promote; it's not meant to live with whoever seeded the vault.
+
+### How knowledge gets in
+
+| Path | Trigger | Lands in |
+|---|---|---|
+| **Session docs-ingest** | `/brain:save` (automatic) | a `wiki/<area>/` **link-note** for canonical docs (points at the doc, never copies its values) · a `wiki/_drafts/` note for messy prose |
+| **Harvested chats** | `bin/harvest-chats.mjs` → `/brain:wiki-ingest` | `wiki/_drafts/` |
+| **By hand** | you write a note | `wiki/_drafts/` (then promote like any draft) |
+
+Everything auto-generated starts as a **draft**. Nothing an agent writes reaches trusted `wiki/` without a human.
+
+### Promoting a draft → trusted (the part that needs people)
+
+The review gate. Periodically — or when `/brain:freshness` flags it — triage `wiki/_drafts/`:
+
+1. **Keep / merge / drop.** Discard transient or duplicate notes; check `wiki/index.md` first.
+2. **Fix the frontmatter** of a keeper: a real `owner`, a `source:` anchor (the `repo/file#anchor`, PR, or commit that makes it true), today's `last_verified`, and an honest `confidence`. *(Full note schema + the one-fact-per-note, tagging, and `[[_COMMUNITY_*]]` code-linking rules live in the vault's own `CLAUDE.md` → "Writing to the wiki" — that's the authority; don't duplicate it.)*
+3. **File it.** Move it out of `_drafts/` into `wiki/<area>/` (or `wiki/bridges/` for a cross-repo contract), add a line to `wiki/index.md`, and end it with a `Code:` link line.
+4. **Open a PR.** Trusted-note changes go through review — they're intentionally **not** in `.saveinclude`, so `/brain:save` never auto-commits them. The PR *is* the promotion.
+
+> Why the gate: a wrong **draft** is a hint; a wrong **trusted** note is a landmine the next agent steps on. The PR is cheap insurance.
+
+### Keeping it healthy
+
+Run **`/brain:freshness`** from the vault for a rot review queue — orphans, dead `[[links]]`, stale `last_verified`, broken `source:` anchors. It **never auto-edits**; it hands you a to-do list. Work it and promote/fix via PR.
+
+### Reading it
+
+You don't "use" the wiki by hand — agents resolve context through the **graph → wiki → raw** rule automatically (the graph-before-grep hook nudges it). `wiki/hot.md` is the per-vault entry cache `/brain:resume` loads first.
+
 ## Dependencies
 
 - **graphify CLI** — *delegated, not vendored* (POC §16.1 one-installer rule). `/brain:init`
@@ -80,10 +113,11 @@ Avoid by keeping graphify **pinned** (so its import stays healthy and the auto-u
 
 ## Status
 
-v0.1.0 — **extracted from the pilot, not yet cold-install-validated** (POC §17.2 step 3). The cold
-install + structural diff against the `pre-plugin-baseline` tag is what hardens this; expect the
-script-invocation path resolution and the registry/init flow to need iteration. See
-`../AI-OS/personal-brain/INSTALL_BASELINE.md` for the acceptance checklist.
+**v0.2.0** — extracted, validated, and **dogfooded end-to-end on a real proprietary repo**
+(`tray_pos_flutter`): scaffolding committed, `lib/`-scoped code graph built, wiki seeded,
+graph-before-grep firing, `/brain:doctor` clean. **POC §17.1 checkbox 1 (packaging/isolation) is MET.**
+Remaining gate: the §10 with/without eval on a real repo (checkbox 2 = the go/no-go for team rollout).
+See `../AI-OS/personal-brain/INSTALL_BASELINE.md` for the acceptance checklist.
 
 ## Commands vs skills
 
