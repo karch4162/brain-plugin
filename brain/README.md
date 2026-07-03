@@ -26,10 +26,19 @@ Find your situation, run the commands in order. Legend: **`/brain:*`** = this pl
 1. Install **`uv`** (https://docs.astral.sh/uv/). The brain installs graphify (pinned) through it on first `/brain:init`, **including registering the `/graphify` skill** (`graphify install --platform claude` — the CLI and the skill are separate installs; init handles both and `/brain:doctor` verifies both).
 2. Install the plugin (needs access to the repo):
    ```
-   /plugin marketplace add https://github.com/vendsy/tray-brain-plugin
+   /plugin marketplace add https://github.com/karch4162/brain-plugin
    /plugin install brain@brain-marketplace
    ```
    Then restart Claude Code (or `/reload-plugins`).
+
+   > **Add by URL, not by local path.** With the GitHub URL, Claude Code clones and caches the marketplace itself (`~/.claude/plugins/`) — you never clone or pull anything manually. Git-sourced marketplaces also auto-refresh in the background at startup.
+
+### Updating — no local checkout involved
+```
+/plugin marketplace update brain-marketplace   # git-pulls the cached marketplace (also happens automatically at startup)
+/plugin update brain@brain-marketplace         # picks up the new version (no-ops if the version didn't bump)
+```
+Updates key off the version in `brain/.claude-plugin/plugin.json` — releases must bump it or `/plugin update` will skip.
 
 ### Scenarios
 

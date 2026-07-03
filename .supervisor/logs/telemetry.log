@@ -1,0 +1,13 @@
+[2026-07-03T19:20:21Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:20:36Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:21:22Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:21:48Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:22:16Z] CORE_EXIT=3 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=true STDERR=score_default_used schema=SUPERVISOR_RESULT status= consent_uninitialised state=missing
+[2026-07-03T19:22:30Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:22:43Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:22:54Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:23:11Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:23:22Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:23:36Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:23:55Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
+[2026-07-03T19:24:14Z] CORE_EXIT=5 SESSION=166065e4-cb78-40b4-8cb6-144856f056ee PENDING_FLAG_NEW=false STDERR=unknown_payload_skipped reason=no_known_result_block
