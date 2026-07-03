@@ -23,20 +23,29 @@ hand-assembled set of global hooks + skills + a hand-written query rule (POC §1
 Find your situation, run the commands in order. Legend: **`/brain:*`** = this plugin · **`/graphify`** = the delegated graphify skill · **`/plugin …`** = built-in Claude Code.
 
 ### Prerequisites — once per machine
-1. Install **`uv`** (https://docs.astral.sh/uv/). The brain installs graphify (pinned) through it on first `/brain:init`.
+1. Install **`uv`** (https://docs.astral.sh/uv/). The brain installs graphify (pinned) through it on first `/brain:init`, **including registering the `/graphify` skill** (`graphify install --platform claude` — the CLI and the skill are separate installs; init handles both and `/brain:doctor` verifies both).
 2. Install the plugin (needs access to the repo):
    ```
-   /plugin marketplace add https://github.com/vendsy/tray-brain-plugin
+   /plugin marketplace add https://github.com/karch4162/brain-plugin
    /plugin install brain@brain-marketplace
    ```
    Then restart Claude Code (or `/reload-plugins`).
+
+   > **Add by URL, not by local path.** With the GitHub URL, Claude Code clones and caches the marketplace itself (`~/.claude/plugins/`) — you never clone or pull anything manually. Git-sourced marketplaces also auto-refresh in the background at startup.
+
+### Updating — no local checkout involved
+```
+/plugin marketplace update brain-marketplace   # git-pulls the cached marketplace (also happens automatically at startup)
+/plugin update brain@brain-marketplace         # picks up the new version (no-ops if the version didn't bump)
+```
+Updates key off the version in `brain/.claude-plugin/plugin.json` — releases must bump it or `/plugin update` will skip.
 
 ### Scenarios
 
 | Your situation | Run, in order | Notes |
 |---|---|---|
 | **A · New code repo, not yet in a brain** | `/brain:init` → *(work)* → `/brain:save` | `init` picks/registers the vault, wires `BRAIN_ROOT`, and **records the graph scope** (per-stack — you don't pick). `save` builds the code graph **at that scope**, ingests changed docs into the wiki, and syncs the mirror. **Don't run raw `/graphify`** — the brain owns the scoped build. |
-| **B · Repo already linked, but you're on a new machine** | *(prereqs)* → clone the vault locally → `/brain:init` → `/graphify .` *(if no `graphify-out/`)* | Re-run `init`: the binding (`BRAIN_ROOT`) and registry are **per-machine** — `init` writes them to the gitignored `.claude/settings.local.json`, so this never conflicts with the shared repo. |
+| **B · Repo already linked, but you're on a new machine** | *(prereqs)* → clone the vault locally → `/brain:init` → `/brain:save` *(if no `graphify-out/` — rebuilds at the recorded scope)* | Re-run `init`: the binding (`BRAIN_ROOT`) and registry are **per-machine** — `init` writes them to the gitignored `.claude/settings.local.json`, so this never conflicts with the shared repo. |
 | **C · The vault repo itself, on a new machine** | clone the vault → `cd` into it → `/brain:init` | Registers the vault + binds it to itself. Detects the existing `CLAUDE.md`/`wiki/` and **won't overwrite** them. |
 | **D · No vault exists yet (first time ever)** | `/brain:init` → choose **"register a new vault"** → give it a path | Scaffolds the skeleton + query-rule `CLAUDE.md` + governance files. Then onboard code repos via scenario A. |
 | **E · Daily work in a linked repo** | `/brain:resume` *(start)* → *(work — just ask structural questions)* → `/brain:save` *(end)* | Graph-before-grep fires automatically; you don't run a command to "use" the graph. |
@@ -81,8 +90,11 @@ You don't "use" the wiki by hand — agents resolve context through the **graph 
 ## Dependencies
 
 - **graphify CLI** — *delegated, not vendored* (POC §16.1 one-installer rule). `/brain:init`
-  ensures it via `uv tool install graphifyy==0.8.46` (**pinned** — see Troubleshooting); the
-  separately-installed graphify skill provides `graphify query/path/explain`.
+  ensures it via `uv tool install graphifyy==0.8.46` (**pinned** — see Troubleshooting).
+- **graphify skill** — ships *inside* the graphify package, but registers separately:
+  `graphify install --platform claude` puts it in `~/.claude/skills/graphify/`. `/brain:init`
+  runs this too (and `/brain:doctor` checks it) — without it the CLI works but `/brain:save`
+  can't build the keyless wiki concept graph.
 - Node (for the `bin/*.mjs` scripts and the hook), Bash (for `sync-graph.sh`), git.
 
 ## Troubleshooting
@@ -99,7 +111,7 @@ skill). Manual equivalent, from a single session with others closed:
 uv tool uninstall graphifyy 2>/dev/null || true
 cmd //c "rmdir /s /q %APPDATA%\\uv\\tools\\graphifyy" 2>/dev/null || true   # Windows: clear the stuck dir
 uv tool install graphifyy==0.8.46
-graphify install
+graphify install --platform claude
 ```
 Avoid by keeping graphify **pinned** (so its import stays healthy and the auto-upgrade never fires).
 

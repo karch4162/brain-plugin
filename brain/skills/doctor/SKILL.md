@@ -17,10 +17,11 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
 ## Checks — run all, print a ✅/⚠️/❌ table, then offer the matching repair per ❌
 
 1. **graphify CLI present & runnable** — `command -v graphify` and `graphify --version` exits 0 with a version. A traceback / `ModuleNotFoundError` / "failed to canonicalize" ⇒ **broken launcher** → R1.
-2. **CLI vs skill version** — compare `graphify --version` to `~/.claude/skills/graphify/.graphify_version`. Mismatch (CLI auto-upgraded, skill didn't) → R2.
-3. **Vault binding** — `$BRAIN_ROOT` set and points at a dir containing `wiki/`? Unset/missing ⇒ tell the user to run `/brain:init` (don't guess).
-4. **Registry health** — `~/.claude/brain/registry.json` parses as JSON; each vault `path` exists and is **OS-native absolute** (Windows `C:/...`, not git-bash `/c/...`, which `path.resolve` mangles). Bad form → R3.
-5. **Local graph (cwd repo)** — `graphify-out/graph.json` present (so the hook fires) and, if `graphify-out/.graphify_python` exists, it points at an interpreter that still exists. Stale → R4.
+2. **`/graphify` skill registered** — `~/.claude/skills/graphify/SKILL.md` exists. The CLI and skill install separately; a CLI-only machine passes check 1 but `/brain:save` can't build the wiki concept graph (its keyless path runs through the *skill*). Missing → R2.
+3. **CLI vs skill version** — compare `graphify --version` to `~/.claude/skills/graphify/.graphify_version`. Mismatch (CLI auto-upgraded, skill didn't) → R2. (Skip if check 2 failed — register first.)
+4. **Vault binding** — `$BRAIN_ROOT` set and points at a dir containing `wiki/`? Unset/missing ⇒ tell the user to run `/brain:init` (don't guess).
+5. **Registry health** — `~/.claude/brain/registry.json` parses as JSON; each vault `path` exists and is **OS-native absolute** (Windows `C:/...`, not git-bash `/c/...`, which `path.resolve` mangles). Bad form → R3.
+6. **Local graph (cwd repo)** — `graphify-out/graph.json` present (so the hook fires) and, if `graphify-out/.graphify_python` exists, it points at an interpreter that still exists. Stale → R4.
 
 ## Repairs (ask before R1 — it reinstalls a global tool)
 
@@ -30,10 +31,10 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
   # Windows: if removal failed on a reparse point (os error 4395), force-clear the tool dir first:
   cmd //c "rmdir /s /q %APPDATA%\\uv\\tools\\graphifyy" 2>/dev/null || true
   uv tool install graphifyy==0.8.46
-  graphify install        # re-sync the Claude skill to the CLI version
+  graphify install --platform claude   # re-register the Claude skill at the CLI version
   ```
   Then verify `graphify --version` runs cleanly and `uv tool install graphifyy --reinstall` completes with **no** reparse error (proves the venv is consistent).
-- **R2 — version mismatch.** `graphify install` (syncs the skill to the CLI). Non-destructive.
+- **R2 — skill missing or version mismatch.** `graphify install --platform claude` (registers/syncs the `~/.claude/skills/graphify/` skill to the CLI version). Non-destructive; if newly registered, the skill shows up after a session restart or `/reload-plugins`.
 - **R3 — registry path not OS-native.** Rewrite the offending `path` / `repos_dir` to OS-native absolute form (Windows `C:/...`), matching `.claude/settings.json`. (See the brain-init "Path handling" rule.)
 - **R4 — stale interpreter cache.** `rm <repo>/graphify-out/.graphify_python` — graphify re-resolves it on next use. Safe.
 
@@ -50,6 +51,7 @@ clean, consistent state.
 ```
 Brain doctor — <vault name or path>
   graphify CLI         ✅ 0.8.46 runnable
+  /graphify skill      ✅ registered (~/.claude/skills/graphify)
   CLI vs skill         ✅ 0.8.46 == 0.8.46
   BRAIN_ROOT           ✅ C:/.../personal-brain (wiki/ present)
   registry             ✅ 1 vault, paths valid + OS-native
