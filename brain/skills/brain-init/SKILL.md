@@ -44,6 +44,12 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
    ```
    If `uv` is absent, tell the user to install it (or `pip install graphifyy==0.8.46`) and stop. If graphify is already installed at another version, leave it — **don't** force an upgrade here; `/brain:doctor` handles drift and repair.
 
+1b. **Ensure the `/graphify` skill is registered with Claude Code — the CLI alone is not enough.** The CLI and the skill install separately: `uv tool install` gives you the binary, but the **skill** (which `/brain:save` hard-depends on for the keyless wiki concept-graph build) only exists after `graphify install --platform claude` registers it into `~/.claude/skills/graphify/`. A CLI-only machine is the known trap — init looks successful, then the first save silently can't refresh the wiki concept graph. Check and register:
+   ```bash
+   [ -f ~/.claude/skills/graphify/SKILL.md ] || graphify install --platform claude
+   ```
+   Verify `~/.claude/skills/graphify/SKILL.md` now exists; if the skill was just registered, tell the user the `/graphify` skill becomes visible after a session restart (or `/reload-plugins`) — the rest of init proceeds fine either way.
+
 2. **Load the registry** (`~/.claude/brain/registry.json`). If it doesn't exist, create it from the template with an empty `vaults: []`.
 
 3. **Determine the default target and check for mismatch.** Read this project's git remote (`git remote get-url origin`). Infer a sensible default:
@@ -93,7 +99,7 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
    Call this out as a real choice because the first build can take a few minutes on a large repo (the docs-ingest dispatches subagents). Don't auto-run it silently.
 
-8. **Confirm.** Print: the chosen vault (name + path), its governance profile, that `BRAIN_ROOT`/`REPOS_DIR` are wired (machine-local), the recorded graph scope, and **whether the brain was seeded just now or is still empty pending `/brain:save`**. If seeded, the vault is ready to `/brain:resume` and query; if deferred, the next step is `/brain:save`. **Do not run raw `/graphify` on the repo** — it would ask you to pick a scope, which the brain has already standardized away.
+8. **Verify, then confirm.** Setup isn't done until it's *checked* — run the `/brain:doctor` check table (all checks, no repairs unless something is ❌; offer the matching repair if so) so the user leaves init with a green bill of health instead of an assumption. Then print: the chosen vault (name + path), its governance profile, that `BRAIN_ROOT`/`REPOS_DIR` are wired (machine-local), the recorded graph scope, and **whether the brain was seeded just now or is still empty pending `/brain:save`**. If seeded, the vault is ready to `/brain:resume` and query; if deferred, the next step is `/brain:save`. **Do not run raw `/graphify` on the repo** — it would ask you to pick a scope, which the brain has already standardized away.
 
 ## Notes
 
