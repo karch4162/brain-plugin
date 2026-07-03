@@ -125,7 +125,7 @@ Avoid by keeping graphify **pinned** (so its import stays healthy and the auto-u
 
 ## Status
 
-**v0.2.0** — extracted, validated, and **dogfooded end-to-end on a real proprietary repo**
+**v0.2.2** — extracted, validated, and **dogfooded end-to-end on a real proprietary repo**
 (`tray_pos_flutter`): scaffolding committed, `lib/`-scoped code graph built, wiki seeded,
 graph-before-grep firing, `/brain:doctor` clean. **POC §17.1 checkbox 1 (packaging/isolation) is MET.**
 Remaining gate: the §10 with/without eval on a real repo (checkbox 2 = the go/no-go for team rollout).
