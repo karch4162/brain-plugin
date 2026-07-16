@@ -1,5 +1,5 @@
 ---
-name: brain-init
+name: init
 description: "Set up the brain for a project: ensure graphify is installed, pick (or register) the target vault from the brain registry, scaffold a new vault if needed, and wire this project to it. Trigger: /brain:init, or 'set up the brain here' / 'connect this repo to a brain'."
 ---
 

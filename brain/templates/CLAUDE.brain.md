@@ -8,13 +8,13 @@ This repo is a **knowledge base for AI agents** (a "brain" vault). You are readi
 
 When answering questions about the codebase or making changes, resolve context in this order:
 
-1. **Graph first.** Query the Graphify graph for structural questions — what connects to what, where a concept lives, blast radius of a change. **Traverse the graph; do not `grep`/`rg` raw source to discover structure.**
+1. **Graph first.** Query the Graphify graph for structural questions — what connects to what, where a concept lives, blast radius of a change. **Traverse the graph; do not `grep`/`rg` raw source to discover structure.** The rule is **graph-first when fresh, advisory otherwise** (see the staleness rule below).
 2. **Wiki second.** Search `wiki/` for decisions, gotchas, contracts, and rationale — the *why* that code can't tell you.
 3. **Raw code last.** Only read source files when you are about to edit them, or when 1–2 came up empty.
 
-> **Graph before grep — this is the point of the brain.** A `grep`/`rg`/`Grep` sweep over source to find "where does X live" or "what calls Y" is exactly the stateless re-derivation this vault exists to replace. A self-gating `PreToolUse` hook (shipped by the brain plugin) reminds you of this when you reach for `Grep` while a `graphify-out/graph.json` is present.
+> **Graph before grep — this is the point of the brain.** A `grep`/`rg`/`Grep` sweep over source to find "where does X live" or "what calls Y" is exactly the stateless re-derivation this vault exists to replace. A self-gating `PreToolUse` hook (shipped by the brain plugin) reminds you of this — once per session, with the graph's built-from commit vs HEAD — when you reach for `Grep` while a `graphify-out/graph.json` is present.
 
-> **Staleness rule — the correctness keystone.** The graph reflects the **last commit**. Treat it as authoritative for **pre-existing, committed structure only — NEVER for any file the session is editing or about to edit** (those are read raw, every time). Fall back to raw read/grep when: (a) no `graphify-out/graph.json` is present; (b) the query returns no nodes, collides on a generic term, the hit carries no `source_location`, or `confidence` is weak; or (c) you are about to edit the file. Staleness downgrades a graph answer to a hint, it never errors.
+> **Staleness rule — the correctness keystone.** **Graph-first when fresh, advisory otherwise.** The graph reflects the commit it was built from (`built_at_commit` in `graph.json`). When that matches HEAD, treat it as authoritative for **pre-existing, committed structure only — NEVER for any file the session is editing or about to edit** (those are read raw, every time). When it lags HEAD, graph answers are **advisory hints** — verify against source. Fall back to raw read/grep when: (a) no `graphify-out/graph.json` is present; (b) the query returns no nodes, collides on a generic term, the hit carries no `source_location`, or `confidence` is weak; or (c) you are about to edit the file. Staleness downgrades a graph answer to a hint, it never errors.
 
 **How to query the graph:**
 
