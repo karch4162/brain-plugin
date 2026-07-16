@@ -14,8 +14,8 @@ hand-assembled set of global hooks + skills + a hand-written query rule (POC §1
 | **Wiki health** | `skills/freshness` + `bin/freshness.mjs` | orphans / dead links / stale `last_verified` / broken `source:` → a review queue (never auto-edits). POC §8. |
 | **Harvest → draft** | `skills/wiki-ingest` + `bin/harvest-chats.mjs` | distill session transcripts into *draft* notes; promotion is a separate PR step. |
 | **Graph sync** | `bin/sync-graph.sh` + `bin/build-community-notes.mjs` | publish per-repo graph mirrors into the vault, namespaced, with community stubs. |
-| **graph-before-grep** | `hooks/` | self-gating PreToolUse nudge (fires only where `graphify-out/graph.json` exists). |
-| **Multi-vault registry** | `skills/brain-init` + `templates/brain-registry.example.json` | route a project's mirror+wiki to the right vault (personal vs team). POC §16.2. |
+| **graph-before-grep** | `hooks/` | self-gating PreToolUse nudge — once per session, staleness-aware (built-from commit vs HEAD; graph-first when fresh, advisory otherwise); fires only where `graphify-out/graph.json` exists. |
+| **Multi-vault registry** | `skills/init` + `templates/brain-registry.example.json` | route a project's mirror+wiki to the right vault (personal vs team). POC §16.2. |
 | **Health/repair** | `skills/doctor` | `/brain:doctor` diagnoses + repairs graphify launcher/version drift, the vault binding, the registry, and stale interpreter caches. |
 
 ## Setup & usage — by scenario (start here)
@@ -131,13 +131,13 @@ graph-before-grep firing, `/brain:doctor` clean. **POC §17.1 checkbox 1 (packag
 Remaining gate: the §10 with/without eval on a real repo (checkbox 2 = the go/no-go for team rollout).
 See `../AI-OS/personal-brain/INSTALL_BASELINE.md` for the acceptance checklist.
 
-## Commands vs skills
+## Skills are the slash commands
 
-User-typed slash commands live in `commands/` (`/brain:save` `/brain:resume` `/brain:freshness`
-`/brain:wiki-ingest` `/brain:init` `/brain:doctor`); each is a thin entry point that reads its `skills/<name>/SKILL.md`
-as the authority. The skills also carry natural-language triggers (e.g. "lint the wiki" → freshness)
-for model auto-invocation. (Plugin `skills/` alone are not user-typed slash commands — that's what
-`commands/` is for.)
+Each `skills/<name>/SKILL.md` registers as both the user-typed slash command (`/brain:save`
+`/brain:resume` `/brain:freshness` `/brain:wiki-ingest` `/brain:init` `/brain:doctor`) and the
+model-invocable skill (natural-language triggers, e.g. "lint the wiki" → freshness). There is
+deliberately **no separate `commands/` dir** — earlier versions shipped thin command wrappers,
+which registered every entry point twice per session (e.g. `brain:init` *and* `brain:brain-init`).
 
 ## Local testing
 

@@ -19,8 +19,7 @@ are *consumers* that depend on it, never the reverse.
 ├── .claude-plugin/marketplace.json # marketplace manifest
 └── brain/                          # the plugin (name: "brain")
     ├── .claude-plugin/plugin.json
-    ├── commands/{save,resume,freshness,wiki-ingest,init,doctor}.md   # user-typed /brain:* slash entry points
-    ├── skills/{save,resume,freshness,wiki-ingest,brain-init,doctor}/SKILL.md   # authority + model-invoked
+    ├── skills/{save,resume,freshness,wiki-ingest,init,doctor}/SKILL.md   # user-typed /brain:* entry points + model-invoked authority
     ├── hooks/{hooks.json, graph-before-grep.mjs}
     ├── bin/{sync-graph.sh, freshness.mjs, build-community-notes.mjs, harvest-chats.mjs}
     └── templates/{CLAUDE.brain.md, graphifyignore, saveinclude, gitignore,
@@ -92,7 +91,7 @@ delegated/external: **B3** graphify skill, **B4** graphify CLI. **B5** `BRAIN_RO
 
 | # | Item | Status |
 |---|---|---|
-| 0 | **User-typed `/brain:*` slash invocation** | ✅ **verified live** — `/brain:freshness` ran end-to-end against the vault (47 notes, report written). Fix was adding `commands/` delegating to the skills (`skills/`-only entries returned "Unknown command"). |
+| 0 | **User-typed `/brain:*` slash invocation** | ✅ **verified live** — `/brain:freshness` ran end-to-end against the vault (47 notes, report written). Originally fixed by adding `commands/` delegating to the skills (`skills/`-only entries returned "Unknown command" on old Claude Code). Current Claude Code registers skills as `/brain:*` directly, and the wrappers caused every entry to register twice (`brain:init` + `brain:brain-init`), so `commands/` was removed in 0.2.3. |
 | 1 | **`${CLAUDE_PLUGIN_ROOT}` expansion** in command/skill bodies | ✅ confirmed — substituted inline in command/skill/hook content (docs + reference plugin) |
 | 2 | **`harvest-chats.mjs` path→projects-dir encoding** matches the OS | ✅ validated — identical real harvest results to the pilot on Windows |
 | 3 | **Genericized bin scripts preserve behavior** | ✅ validated — `freshness` output byte-identical to the pilot (with + without explicit `REPOS_DIR`) |

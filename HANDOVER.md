@@ -23,7 +23,7 @@ The design spec ("the POC") is the source of truth: `AI-OS/personal-brain/docs/s
 - **Next milestone:** the §10 eval on a real Tray repo (hub/POS) = **checkbox 2** = the go/no-go for team rollout.
 
 ## The plugin (what's inside `brain/`)
-- `.claude-plugin/plugin.json` · `commands/` (save · resume · freshness · wiki-ingest · init · doctor → user-typed `/brain:*`) · `skills/` (same set, the authority each command reads; init's skill is `brain-init`) · `hooks/hooks.json` + `graph-before-grep.mjs` (auto-loaded) · `bin/` (sync-graph · freshness · build-community-notes · harvest-chats) · `templates/` (CLAUDE.brain.md = the policy, governance files, vault skeleton, registry example).
+- `.claude-plugin/plugin.json` · `skills/` (save · resume · freshness · wiki-ingest · init · doctor — each SKILL.md is both the user-typed `/brain:*` entry point and the model-invoked authority; no separate `commands/` dir) · `hooks/hooks.json` + `graph-before-grep.mjs` (auto-loaded) · `bin/` (sync-graph · freshness · build-community-notes · harvest-chats) · `templates/` (CLAUDE.brain.md = the policy, governance files, vault skeleton, registry example).
 - Repo root also: `eval/`, `README.md` (user-facing, incl. the scenario grid + troubleshooting), this file.
 
 ## Locked decisions / frozen contracts (do NOT re-litigate)
