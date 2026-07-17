@@ -44,3 +44,4 @@ Validate a scheduled run actually executed (not just "Ready"/exit 0): confirm a 
 
 - Read-only except the report file under `logs/`.
 - Tune `--stale-days` down as the wiki ages; 45 is deliberately loose so a young vault isn't all-stale.
+- To apply the mechanical subset of the queue (source re-anchors, orphan indexing, tag folds) as one reviewed batch, follow up with `/brain:tidy`.
