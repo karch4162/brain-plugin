@@ -12,6 +12,7 @@ hand-assembled set of global hooks + skills + a hand-written query rule (POC §1
 | **3-step query rule** | `templates/CLAUDE.brain.md` | graph → wiki → raw. Written into the vault's `CLAUDE.md` by `/brain:init` (plugins can't ship an always-on `CLAUDE.md`). |
 | **Session continuity** | `skills/save`, `skills/resume` | `/brain:save` writes a dated log + refreshes `hot.md`; `/brain:resume` rehydrates it. |
 | **Wiki health** | `skills/freshness` + `bin/freshness.mjs` | orphans / dead links / stale `last_verified` / broken `source:` → a review queue (never auto-edits). POC §8. |
+| **Wiki tidy** | `skills/tidy` | applies the mechanical tier of a freshness report (source re-anchors, orphan hub-indexing, tag folds) as one approved batch via PR; never deletes or edits facts. |
 | **Harvest → draft** | `skills/wiki-ingest` + `bin/harvest-chats.mjs` | distill session transcripts into *draft* notes; promotion is a separate PR step. |
 | **Graph sync** | `bin/sync-graph.sh` + `bin/build-community-notes.mjs` | publish per-repo graph mirrors into the vault, namespaced, with community stubs. |
 | **graph-before-grep** | `hooks/` | self-gating PreToolUse nudge — once per session, staleness-aware (built-from commit vs HEAD; graph-first when fresh, advisory otherwise); fires only where `graphify-out/graph.json` exists. |
@@ -49,7 +50,7 @@ Updates key off the version in `brain/.claude-plugin/plugin.json` — releases m
 | **C · The vault repo itself, on a new machine** | clone the vault → `cd` into it → `/brain:init` | Registers the vault + binds it to itself. Detects the existing `CLAUDE.md`/`wiki/` and **won't overwrite** them. |
 | **D · No vault exists yet (first time ever)** | `/brain:init` → choose **"register a new vault"** → give it a path | Scaffolds the skeleton + query-rule `CLAUDE.md` + governance files. Then onboard code repos via scenario A. |
 | **E · Daily work in a linked repo** | `/brain:resume` *(start)* → *(work — just ask structural questions)* → `/brain:save` *(end)* | Graph-before-grep fires automatically; you don't run a command to "use" the graph. |
-| **F · Tending the vault** | `/brain:freshness` · `/brain:wiki-ingest` | Run from the vault. `freshness` = rot review queue (orphans/dead links/stale); `wiki-ingest` = distill harvested chats → draft notes. |
+| **F · Tending the vault** | `/brain:freshness` · `/brain:tidy` · `/brain:wiki-ingest` | Run from the vault. `freshness` = rot review queue (orphans/dead links/stale); `tidy` = apply its mechanical subset as one reviewed batch; `wiki-ingest` = distill harvested chats → draft notes. |
 | **G · Graph / graphify acting broken** | `/brain:doctor` | Diagnoses + repairs the graphify launcher/version, the vault binding, the registry, and stale interpreter caches. |
 
 > **Per-machine, not per-clone:** the vault binding and registry (`~/.claude/brain/registry.json`) are machine-specific. Cloning a linked repo onto a new laptop always needs one `/brain:init` re-run (scenario B) — it's quick, non-destructive, and writes only to the gitignored local override.
@@ -81,7 +82,7 @@ The review gate. Periodically — or when `/brain:freshness` flags it — triage
 
 ### Keeping it healthy
 
-Run **`/brain:freshness`** from the vault for a rot review queue — orphans, dead `[[links]]`, stale `last_verified`, broken `source:` anchors. It **never auto-edits**; it hands you a to-do list. Work it and promote/fix via PR.
+Run **`/brain:freshness`** from the vault for a rot review queue — orphans, dead `[[links]]`, stale `last_verified`, broken `source:` anchors. It **never auto-edits**; it hands you a to-do list. For the mechanical subset (relocated `source:` anchors, unindexed orphan families, singleton-tag folds), **`/brain:tidy`** turns the list into a single approved batch and ships it as a PR — judgment items (deletions, stale re-verification, dead links) stay yours.
 
 ### Reading it
 
