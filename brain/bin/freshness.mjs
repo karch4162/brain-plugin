@@ -58,6 +58,24 @@ function resolveReposDir(vault, covered) {
   return join(vault, '..');
 }
 
+// Canonical repo names → local checkout folder, read from each checkout's git
+// remote. A `source:` anchor's first segment is a *repo name*, not a folder name —
+// devs check the same repo out under different folders (store-hub vs edge after a
+// rename), and broken-source results must not depend on whose laptop runs the scan.
+const repoByName = new Map();
+if (existsSync(REPOS_DIR)) {
+  for (const e of readdirSync(REPOS_DIR, { withFileTypes: true })) {
+    if (!e.isDirectory()) continue;
+    const dir = join(REPOS_DIR, e.name);
+    if (!repoByName.has(e.name)) repoByName.set(e.name, dir); // folder name always resolves
+    const cfg = join(dir, '.git', 'config');
+    if (existsSync(cfg)) {
+      const m = readFileSync(cfg, 'utf8').match(/^\s*url\s*=\s*\S*?([^\/:]+?)(?:\.git)?\s*$/m);
+      if (m && !repoByName.has(m[1])) repoByName.set(m[1], dir);
+    }
+  }
+}
+
 // ---- collect markdown files --------------------------------------------------
 function walk(dir, acc = []) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -73,6 +91,15 @@ function walk(dir, acc = []) {
 // false ghost.
 const stripCode = (t) => t.replace(/```[\s\S]*?```/g, '').replace(/`[^`\n]*`/g, '');
 const wikilinks = (t) => [...stripCode(t).matchAll(/\[\[([^\]]+)\]\]/g)].map((m) => m[1].split('|')[0].split('#')[0].trim());
+// Markdown-style links to .md files count too — /init seeds index.md with
+// [title](area/note.md) lines, so only crediting [[wikilinks]] falsely orphans
+// every indexed note. External URLs are skipped.
+const mdNoteLinks = (t) =>
+  [...stripCode(t).matchAll(/\]\(([^)\s]+\.md)(?:#[^)]*)?\)/g)]
+    .map((m) => m[1])
+    .filter((p) => !/^https?:\/\//i.test(p))
+    .map((p) => basename(p, '.md'));
+const allLinks = (t) => [...wikilinks(t), ...mdNoteLinks(t)];
 
 const META_FILES = new Set(['index.md', 'hot.md', 'log.md']);
 const wikiFiles = walk(join(VAULT, 'wiki'));
@@ -116,7 +143,7 @@ const parsed = notes.map(parseNote);
 const inbound = new Set();
 for (const meta of ['index.md', 'hot.md']) {
   const p = join(VAULT, 'wiki', meta);
-  if (existsSync(p)) for (const t of wikilinks(readFileSync(p, 'utf8'))) inbound.add(t);
+  if (existsSync(p)) for (const t of allLinks(readFileSync(p, 'utf8'))) inbound.add(t);
 }
 for (const n of parsed) for (const l of n.links) inbound.add(l);
 
@@ -173,7 +200,9 @@ for (const n of parsed) {
       // Resolve against a covered repo root, else against the vault.
       let resolved = null;
       const firstSeg = src.split('/')[0];
-      if (COVERED.includes(firstSeg)) {
+      if (repoByName.has(firstSeg)) {
+        resolved = join(repoByName.get(firstSeg), src.split('/').slice(1).join('/'));
+      } else if (COVERED.includes(firstSeg)) {
         resolved = join(REPOS_DIR, src);
       } else if (existsSync(join(VAULT, src))) {
         resolved = join(VAULT, src);
@@ -220,7 +249,7 @@ for (const f of allFiles) {
 const cAdj = new Map(allFiles.map((f) => [f, new Set()]));
 const ghostTargets = new Set();
 for (const f of allFiles) {
-  for (const t of wikilinks(allText.get(f))) {
+  for (const t of allLinks(allText.get(f))) {
     const tf = nameToFile.get(t);
     if (tf && tf !== f) { cAdj.get(f).add(tf); cAdj.get(tf).add(f); }
     else if (!tf) ghostTargets.add(t);

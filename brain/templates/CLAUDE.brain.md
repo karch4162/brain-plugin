@@ -67,7 +67,7 @@ Scope is fixed **per stack**, never an engineer's per-run choice — otherwise t
   ---
   id: <kebab-case-slug>
   tags: [<cross-cutting>, <topic>, ...]
-  source: <repo/file#anchor, PR, or commit that makes this true>
+  source: <repo/file#anchor, PR, or commit that makes this true — the repo segment is the CANONICAL repo name (its git-remote name), not your local checkout folder>
   owner: <github-handle>
   last_verified: <YYYY-MM-DD>
   confidence: high | medium | low
