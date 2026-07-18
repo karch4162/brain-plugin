@@ -43,7 +43,7 @@ bin/harvest-chats.mjs   →  chats/<repo>/*.md (status: raw)
 
 4. **Mark the digest ingested.** Flip its frontmatter `status: raw` → `status: ingested` so the next run skips it.
 
-5. **Report** a promotion queue: list the draft notes created, each with a one-line "promote / merge into [[existing]] / drop" recommendation. Do **not** move drafts into trusted areas yourself — that's the reviewed PR step.
+5. **Report** a promotion queue: list the draft notes created, each with a one-line "promote / merge into [[existing]] / drop" recommendation. Do **not** move drafts into trusted areas yourself — hand the queue to `/brain:promote`, the reviewed PR step.
 
 ## Notes
 
