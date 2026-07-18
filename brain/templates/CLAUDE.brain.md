@@ -85,6 +85,7 @@ Scope is fixed **per stack**, never an engineer's per-run choice — otherwise t
 - `/brain:save` — write a dated session log, refresh `hot.md`, append to `wiki/log.md`, (re)build changed repo graphs **at the standard scope**, ingest changed docs into the wiki (§15.6), sync mirrors, refresh the wiki graph, commit (allowlist only). The one end-of-session command.
 - `/brain:freshness` — wiki health check (orphans, dead links, stale `last_verified`, broken `source:`) → a review queue.
 - `/brain:tidy` — apply the mechanical tier of the freshness queue (source re-anchors, orphan hub-indexing, tag folds) as one approved batch via PR; never deletes notes or edits facts.
+- `/brain:promote` — guided draft→trusted triage (keep/merge/drop, frontmatter validation, filing + index) shipped as one PR; drafts older than 14 days are promote-or-drop, never left in staging.
 - `/brain:wiki-ingest` — distill harvested chats into draft notes (run the harvest script first).
 
 ## Repos this brain covers

@@ -13,6 +13,7 @@ hand-assembled set of global hooks + skills + a hand-written query rule (POC §1
 | **Session continuity** | `skills/save`, `skills/resume` | `/brain:save` writes a dated log + refreshes `hot.md`; `/brain:resume` rehydrates it. |
 | **Wiki health** | `skills/freshness` + `bin/freshness.mjs` | orphans / dead links / stale `last_verified` / broken `source:` → a review queue (never auto-edits). POC §8. |
 | **Wiki tidy** | `skills/tidy` | applies the mechanical tier of a freshness report (source re-anchors, orphan hub-indexing, tag folds) as one approved batch via PR; never deletes or edits facts. |
+| **Draft → trusted** | `skills/promote` | guided keep/merge/drop triage of `wiki/_drafts/`, frontmatter validation, filing + indexing, one PR per batch; 14-day promote-or-drop TTL. |
 | **Harvest → draft** | `skills/wiki-ingest` + `bin/harvest-chats.mjs` | distill session transcripts into *draft* notes; promotion is a separate PR step. |
 | **Graph sync** | `bin/sync-graph.sh` + `bin/build-community-notes.mjs` | publish per-repo graph mirrors into the vault, namespaced, with community stubs. |
 | **graph-before-grep** | `hooks/` | self-gating PreToolUse nudge — once per session, staleness-aware (built-from commit vs HEAD; graph-first when fresh, advisory otherwise); fires only where `graphify-out/graph.json` exists. |
@@ -50,7 +51,7 @@ Updates key off the version in `brain/.claude-plugin/plugin.json` — releases m
 | **C · The vault repo itself, on a new machine** | clone the vault → `cd` into it → `/brain:init` | Registers the vault + binds it to itself. Detects the existing `CLAUDE.md`/`wiki/` and **won't overwrite** them. |
 | **D · No vault exists yet (first time ever)** | `/brain:init` → choose **"register a new vault"** → give it a path | Scaffolds the skeleton + query-rule `CLAUDE.md` + governance files. Then onboard code repos via scenario A. |
 | **E · Daily work in a linked repo** | `/brain:resume` *(start)* → *(work — just ask structural questions)* → `/brain:save` *(end)* | Graph-before-grep fires automatically; you don't run a command to "use" the graph. |
-| **F · Tending the vault** | `/brain:freshness` · `/brain:tidy` · `/brain:wiki-ingest` | Run from the vault. `freshness` = rot review queue (orphans/dead links/stale); `tidy` = apply its mechanical subset as one reviewed batch; `wiki-ingest` = distill harvested chats → draft notes. |
+| **F · Tending the vault** | `/brain:freshness` · `/brain:tidy` · `/brain:wiki-ingest` · `/brain:promote` | Run from the vault. `freshness` = rot review queue (orphans/dead links/stale); `tidy` = apply its mechanical subset as one reviewed batch; `wiki-ingest` = distill harvested chats → draft notes; `promote` = graduate drafts to trusted via one PR (14-day promote-or-drop TTL). |
 | **G · Graph / graphify acting broken** | `/brain:doctor` | Diagnoses + repairs the graphify launcher/version, the vault binding, the registry, and stale interpreter caches. |
 
 > **Per-machine, not per-clone:** the vault binding and registry (`~/.claude/brain/registry.json`) are machine-specific. Cloning a linked repo onto a new laptop always needs one `/brain:init` re-run (scenario B) — it's quick, non-destructive, and writes only to the gitignored local override.
@@ -71,7 +72,7 @@ Everything auto-generated starts as a **draft**. Nothing an agent writes reaches
 
 ### Promoting a draft → trusted (the part that needs people)
 
-The review gate. Periodically — or when `/brain:freshness` flags it — triage `wiki/_drafts/`:
+The review gate. **`/brain:promote`** runs it as a guided batch: triage rows with age + duplicate checks, per-draft keep/merge/drop decisions, frontmatter validation with source-anchor verification, filing + indexing, and one PR for the whole batch. Drafts older than **14 days** are promote-or-drop — staging is a queue, not a home; an old draft has already proven nothing reads it there. The manual flow it automates:
 
 1. **Keep / merge / drop.** Discard transient or duplicate notes; check `wiki/index.md` first.
 2. **Fix the frontmatter** of a keeper: a real `owner`, a `source:` anchor (the `repo/file#anchor`, PR, or commit that makes it true), today's `last_verified`, and an honest `confidence`. *(Full note schema + the one-fact-per-note, tagging, and `[[_COMMUNITY_*]]` code-linking rules live in the vault's own `CLAUDE.md` → "Writing to the wiki" — that's the authority; don't duplicate it.)*
@@ -135,7 +136,7 @@ See `../AI-OS/personal-brain/INSTALL_BASELINE.md` for the acceptance checklist.
 ## Skills are the slash commands
 
 Each `skills/<name>/SKILL.md` registers as both the user-typed slash command (`/brain:save`
-`/brain:resume` `/brain:freshness` `/brain:wiki-ingest` `/brain:init` `/brain:doctor`) and the
+`/brain:resume` `/brain:freshness` `/brain:tidy` `/brain:promote` `/brain:wiki-ingest` `/brain:init` `/brain:doctor`) and the
 model-invocable skill (natural-language triggers, e.g. "lint the wiki" → freshness). There is
 deliberately **no separate `commands/` dir** — earlier versions shipped thin command wrappers,
 which registered every entry point twice per session (e.g. `brain:init` *and* `brain:brain-init`).
