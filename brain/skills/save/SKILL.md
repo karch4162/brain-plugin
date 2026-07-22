@@ -36,7 +36,11 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    ```
    Be honest in "Pending" — this is what `/brain:resume` surfaces next time. Don't claim things are done that aren't.
 
-3. **Refresh `wiki/hot.md`.** Update the `_Last refreshed:_` date and rewrite the "Current focus" section to reflect where things actually stand now. Keep it ≤ ~500 words. Don't let it accrete — replace stale bullets, don't just append.
+3. **Refresh `wiki/hot.md` — rewrite, never append.** This is a *rolling cache*, not a log; the session history already lives in `logs/` (step 2), so nothing is lost by deleting from here. Concretely:
+   - Update the `_Last refreshed:_` date.
+   - **Rewrite** "Current focus" to only what is actually in flight *now*. **Delete** any bullet describing a prior session or work that's finished — do not add "Prior session:" bullets, ever.
+   - **Hard budget: after your edit, the whole file must be ≤ ~500 words.** If it's over, keep cutting — oldest/stalest bullets first — until it isn't. Roughly: if a bullet wouldn't change what the next session does, it goes.
+   - Why this is enforced: `/brain:resume` reads this file first every session, and step 5c re-extracts it into the wiki concept graph on every save — a bloated hot.md makes *every* future save slower and noisier. `/brain:freshness` flags the file when it exceeds ~750 words; treat that finding as "this step was skipped."
 
 4. **Append one line to `wiki/log.md`** (append-only operation log), e.g.:
    ```

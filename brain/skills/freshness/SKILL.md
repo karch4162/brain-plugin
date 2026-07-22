@@ -21,6 +21,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).
    - **Orphan notes** — notes nothing links to (not in `index.md`/`hot.md`, not linked by any note).
    - **Stale `last_verified`** — frontmatter dates older than the threshold (default 45 days).
    - **Broken `source:` anchors** — a `source:` file path that no longer exists in its repo (resolved against `REPOS_DIR`, default the vault's sibling dir).
+   - **`hot.md` over word budget** — the rolling cache exceeds ~750 words (target ≤ ~500; `--hot-max-words` to tune). Means `/brain:save` has been appending instead of rewriting.
    - Plus: missing tags, singleton tags, and whole-vault graph connectivity (detached wiki clusters).
 
 2. **Read the generated report** (`logs/freshness-<date>.md`) and present the findings grouped, **with a recommended disposition per item**, e.g.:
@@ -28,6 +29,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).
    - broken source → the source moved/was deleted; re-anchor `source:` or re-verify the fact?
    - stale → re-verify against current code and bump `last_verified`, or the fact is still true (just bump)?
    - orphan → add an `index.md` line / inbound link, or archive the note?
+   - hot.md over budget → offer to prune it now: rewrite "Current focus" to what's actually current, drop prior-session bullets (history is in `logs/`), get it back under ~500 words.
 
 3. **Only act on a finding after the user confirms** (or if they said "just fix the obvious ones"). Link fixes and `index.md` additions are low-risk; deleting/re-verifying facts is a judgment call. Trusted-note edits still follow the PR convention in the vault's `CLAUDE.md`.
 

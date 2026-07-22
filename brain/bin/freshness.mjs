@@ -9,6 +9,7 @@
 //   2. Orphan notes         — a note nothing links to (not in index.md, not linked)
 //   3. Stale last_verified  — frontmatter date older than --stale-days (default 45)
 //   4. Broken source anchors— a `source:` file path that no longer exists on disk
+//   5. hot.md over budget   — the rolling cache exceeds its word budget (accretion)
 //   + missing/singleton tags, and whole-vault graph connectivity.
 //
 // The VAULT is resolved from $BRAIN_ROOT (→ $CLAUDE_PROJECT_DIR → cwd) or --vault;
@@ -33,6 +34,9 @@ const VAULT = argVal('--vault') || process.env.BRAIN_ROOT || process.env.CLAUDE_
 const HOME = process.env.HOME || process.env.USERPROFILE || '~';
 
 const STALE_DAYS = Number(argVal('--stale-days')) || 45;
+// hot.md targets ~500 words (see the save skill); flag past 1.5x so a slightly
+// long-but-honest cache doesn't nag, while real accretion always trips it.
+const HOT_MAX_WORDS = Number(argVal('--hot-max-words')) || 750;
 const TO_STDOUT = argv.includes('--stdout');
 
 if (!existsSync(join(VAULT, 'wiki'))) {
@@ -218,6 +222,19 @@ for (const n of parsed) {
   }
 }
 
+// ---- hot.md word budget --------------------------------------------------------
+// hot.md is a *rolling* cache: /brain:save must replace stale bullets, not append.
+// A vault where saves accrete "prior session" bullets balloons the file, and every
+// save re-extracts it into the wiki concept graph — so bloat taxes every session.
+const hotBloat = [];
+{
+  const hotPath = join(VAULT, 'wiki', 'hot.md');
+  if (existsSync(hotPath)) {
+    const words = readFileSync(hotPath, 'utf8').split(/\s+/).filter(Boolean).length;
+    if (words > HOT_MAX_WORDS) hotBloat.push({ words, max: HOT_MAX_WORDS });
+  }
+}
+
 // ---- whole-vault graph connectivity ------------------------------------------
 // Model the vault like Obsidian's graph view: every .md is a node, every resolved
 // [[link]] an edge. Links resolve via basename OR a frontmatter alias (community
@@ -292,6 +309,7 @@ L.push(
     `Stale (>${STALE_DAYS}d): ${stale.length} · Broken sources: ${brokenSources.length}` +
     ` · No tags: ${noTags.length}` +
     ` · Detached wiki clusters: ${detachedKnowledge.length}` +
+    (hotBloat.length ? ` · hot.md over budget: ${hotBloat[0].words}w` : '') +
     (noFrontmatter.length ? ` · No frontmatter: ${noFrontmatter.length}` : '')
 );
 L.push('');
@@ -311,6 +329,11 @@ section('Notes missing `tags:`', noTags, (f) => `[${f}](${f})`);
 const singletons = [...tagCounts.entries()].filter(([, ns]) => ns.length === 1).sort();
 section('Singleton tags (used by one note — fold into the shared vocab or drop)', singletons, ([t, ns]) => `\`${t}\` — only on [${ns[0]}](${ns[0]})`);
 if (noFrontmatter.length) section('Notes missing frontmatter', noFrontmatter, (f) => `[${f}](${f})`);
+if (hotBloat.length)
+  section('`hot.md` over word budget', hotBloat, (h) =>
+    `[wiki/hot.md](wiki/hot.md) is **${h.words} words** — target ≤ ~500 (flagged above ${h.max}). ` +
+    `It has been accreting: rewrite "Current focus" down to what is actually current and drop prior-session bullets ` +
+    `(they live in \`logs/\`). Bloat here re-extracts into the concept graph on every \`/brain:save\`.`);
 
 // Graph connectivity (Obsidian-style, whole vault). Detached wiki clusters are
 // real issues; ghost nodes + non-knowledge detachment are informational.
@@ -339,7 +362,7 @@ L.push('');
 
 const total =
   deadLinks.length + orphans.length + stale.length + brokenSources.length +
-  noFrontmatter.length + noTags.length + detachedKnowledge.length;
+  noFrontmatter.length + noTags.length + detachedKnowledge.length + hotBloat.length;
 L.push('---');
 L.push(total === 0 ? '✅ Clean — no issues found.' : `⚠️ ${total} item(s) to review.`);
 const report = L.join('\n') + '\n';
