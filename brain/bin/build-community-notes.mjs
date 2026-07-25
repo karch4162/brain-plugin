@@ -18,6 +18,13 @@
 // Covers the per-repo code mirrors under <vault>/graphify/<repo>/ AND the vault's own
 // wiki concept graph under <vault>/graphify-out/.
 //
+// Stub identity is stable across rebuilds: graphify re-mints community labels every
+// run, so filenames derived naively from labels churn on each refresh (renames break
+// hand-written [[links]] and flood git history). Each rich stub therefore records its
+// member node names in frontmatter; on the next run we match new communities to prior
+// stubs by member overlap (Jaccard >= 0.5, greedy best-first) and reuse the prior
+// filename, carrying the new label as an alias.
+//
 // The VAULT is resolved from $BRAIN_ROOT (→ $CLAUDE_PROJECT_DIR → cwd); the script
 // lives in the plugin, not the vault, so it can't use its own location.
 //
@@ -98,8 +105,55 @@ for (const name of names) {
   }
 
   const outDir = join(dir, 'communities');
+
+  // Prior stub identities: fileBase -> {label, members} read back from last run's
+  // frontmatter, so this run can keep filenames stable under label churn.
+  const prior = new Map();
+  if (existsSync(outDir)) {
+    for (const f of readdirSync(outDir)) {
+      if (!f.endsWith('.md')) continue;
+      const text = readFileSync(join(outDir, f), 'utf8');
+      const fmMatch = text.match(/^---\n([\s\S]*?)\n---/);
+      if (!fmMatch) continue;
+      const listOf = (key) => {
+        const m = fmMatch[1].match(new RegExp(`^${key}:\\s*\\n((?:[ \\t]*-[ \\t]*.*\\n?)+)`, 'm'));
+        return m ? [...m[1].matchAll(/^[ \t]*-[ \t]*(.*)$/gm)].map((x) => x[1].trim().replace(/^"|"$/g, '')) : [];
+      };
+      const label = text.match(/^# (.+)$/m)?.[1]?.trim();
+      prior.set(f.replace(/\.md$/, ''), { label, members: new Set(listOf('members')) });
+    }
+  }
+
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
+
+  const nodeKey = (n) => String(n.name ?? n.label ?? n.id ?? '');
+  const jaccard = (a, b) => {
+    if (!a.size || !b.size) return 0;
+    let hit = 0;
+    for (const x of a) if (b.has(x)) hit++;
+    return hit / (a.size + b.size - hit);
+  };
+
+  // Greedy best-first assignment of new communities to prior fileBases.
+  const memberSets = new Map(); // rawName -> Set of member node keys
+  for (const [rawName, ids] of byName) {
+    memberSets.set(rawName, new Set(ids.flatMap(({ id }) => members.get(id) ?? []).map(nodeKey).filter(Boolean)));
+  }
+  const candidates = [];
+  for (const [rawName, set] of memberSets)
+    for (const [base, p] of prior) {
+      const score = jaccard(set, p.members);
+      if (score >= 0.5) candidates.push({ rawName, base, score, priorLabel: p.label });
+    }
+  candidates.sort((a, b) => b.score - a.score);
+  const assigned = new Map(); // rawName -> {base, priorLabel}
+  const usedBases = new Set();
+  for (const c of candidates) {
+    if (assigned.has(c.rawName) || usedBases.has(c.base)) continue;
+    assigned.set(c.rawName, c);
+    usedBases.add(c.base);
+  }
 
   // resolvable = every name (filename basename + aliases) that an emitted stub answers to.
   const resolvable = new Set();
@@ -112,11 +166,12 @@ for (const name of names) {
     s.delete(fileBase);
     return [...s];
   };
-  const fmBlock = (ids, nodeCount, aliases) =>
+  const fmBlock = (ids, nodeCount, aliases, memberKeys = []) =>
     [
       '---', 'generated: true', 'generator: bin/build-community-notes.mjs',
       `repo: ${name}`, `community_ids: [${ids.join(', ')}]`, `node_count: ${nodeCount}`,
       ...(aliases.length ? ['aliases:', ...aliases.map((a) => `  - ${JSON.stringify(a)}`)] : []),
+      ...(memberKeys.length ? ['members:', ...memberKeys.map((m) => `  - ${JSON.stringify(m)}`)] : []),
       '---',
     ].join('\n');
   // tiny alias re-reader so resolvable stays in sync with what we wrote
@@ -139,8 +194,20 @@ for (const name of names) {
     const fileCounts = new Map();
     for (const n of nodes) if (n.source_file) fileCounts.set(n.source_file, (fileCounts.get(n.source_file) ?? 0) + 1);
     const topFiles = [...fileCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
-    const fileBase = `_COMMUNITY_${safeName(rawName)}`;
-    const fm = fmBlock(ids.map((i) => i.id), nodes.length, aliasesFor(rawName, fileBase));
+    const match = assigned.get(rawName);
+    const defaultBase = `_COMMUNITY_${safeName(rawName)}`;
+    const fileBase = match ? match.base : defaultBase;
+    const aliases = aliasesFor(rawName, fileBase);
+    if (match) {
+      // Keep the prior filename; the new label (and the naive base it would have
+      // produced) resolve via aliases, as does the prior label if it changed.
+      if (defaultBase !== fileBase && !aliases.includes(defaultBase)) aliases.push(defaultBase);
+      if (match.priorLabel && match.priorLabel !== rawName) {
+        const a = `_COMMUNITY_${match.priorLabel}`;
+        if (a !== fileBase && !aliases.includes(a)) aliases.push(a);
+      }
+    }
+    const fm = fmBlock(ids.map((i) => i.id), nodes.length, aliases, [...memberSets.get(rawName)].sort());
     const mid = `
 > Auto-generated stub for graph community "${rawName}" (${name}). Do not hand-edit —
 > regenerated by \`bin/build-community-notes.mjs\`. Source of truth: \`${graphRel}\`.
