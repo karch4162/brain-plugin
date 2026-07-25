@@ -148,11 +148,24 @@ for (const name of names) {
     }
   candidates.sort((a, b) => b.score - a.score);
   const assigned = new Map(); // rawName -> {base, priorLabel}
-  const usedBases = new Set();
+  // Windows/macOS filesystems are case-insensitive: two communities whose names
+  // differ only by case ("Success Metrics" vs "SUCCESS METRICS") would silently
+  // overwrite each other's stub, orphaning one's aliases as ghost links. Track
+  // claimed basenames case-insensitively and de-dupe with a numeric suffix.
+  const usedBases = new Map(); // lowercased base -> count
+  const takeBase = (base) => {
+    const key = base.toLowerCase();
+    const n = usedBases.get(key) ?? 0;
+    usedBases.set(key, n + 1);
+    if (n === 0) return base;
+    const suffixed = `${base} (${n + 1})`;
+    usedBases.set(suffixed.toLowerCase(), (usedBases.get(suffixed.toLowerCase()) ?? 0) + 1);
+    return suffixed;
+  };
   for (const c of candidates) {
-    if (assigned.has(c.rawName) || usedBases.has(c.base)) continue;
+    if (assigned.has(c.rawName) || usedBases.has(c.base.toLowerCase())) continue;
     assigned.set(c.rawName, c);
-    usedBases.add(c.base);
+    usedBases.set(c.base.toLowerCase(), 1);
   }
 
   // resolvable = every name (filename basename + aliases) that an emitted stub answers to.
@@ -196,12 +209,12 @@ for (const name of names) {
     const topFiles = [...fileCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
     const match = assigned.get(rawName);
     const defaultBase = `_COMMUNITY_${safeName(rawName)}`;
-    const fileBase = match ? match.base : defaultBase;
+    const fileBase = match ? match.base : takeBase(defaultBase);
     const aliases = aliasesFor(rawName, fileBase);
+    // Keep the prior (or suffix-de-duped) filename; the naive base the label
+    // would have produced resolves via an alias, as does a changed prior label.
+    if (defaultBase !== fileBase && !aliases.includes(defaultBase)) aliases.push(defaultBase);
     if (match) {
-      // Keep the prior filename; the new label (and the naive base it would have
-      // produced) resolve via aliases, as does the prior label if it changed.
-      if (defaultBase !== fileBase && !aliases.includes(defaultBase)) aliases.push(defaultBase);
       if (match.priorLabel && match.priorLabel !== rawName) {
         const a = `_COMMUNITY_${match.priorLabel}`;
         if (a !== fileBase && !aliases.includes(a)) aliases.push(a);
@@ -224,9 +237,12 @@ ${topFiles.map(([f, c]) => `- \`${f}\` (${c} nodes)`).join('\n') || '- (no file-
   let minimal = 0;
   for (const [label, targets] of labelToTargets) {
     if (byName.has(label)) continue; // already has a rich stub
-    const fileBase = `_COMMUNITY_${safeName(label)}`;
-    if (resolvable.has(fileBase) || existsSync(join(outDir, `${fileBase}.md`))) continue;
-    const aliases = [...new Set([...[...targets].map((t) => `_COMMUNITY_${t}`), `_COMMUNITY_${label}`])].filter((a) => a !== fileBase);
+    const defaultBase = `_COMMUNITY_${safeName(label)}`;
+    if (resolvable.has(defaultBase)) continue;
+    // No existsSync check: it is case-insensitive on Windows/macOS and would drop
+    // this stub (and its aliases) when a rich stub differs only by case.
+    const fileBase = takeBase(defaultBase);
+    const aliases = [...new Set([...[...targets].map((t) => `_COMMUNITY_${t}`), `_COMMUNITY_${label}`, defaultBase])].filter((a) => a !== fileBase);
     const fm = fmBlock([], 0, aliases);
     writeStub(label, fileBase, fm, `\n> Auto-generated stub for graph community "${label}" (${name}) — linked from the report without a detail section.\n`);
     minimal++;
