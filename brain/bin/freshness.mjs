@@ -10,7 +10,8 @@
 //   3. Stale last_verified  — frontmatter date older than --stale-days (default 45)
 //   4. Broken source anchors— a `source:` file path that no longer exists on disk
 //   5. hot.md over budget   — the rolling cache exceeds its word budget (accretion)
-//   + missing/singleton tags, and whole-vault graph connectivity.
+//   + missing/singleton tags, whole-vault graph connectivity (detached wiki
+//     clusters + mirror islands), and all-generic community labels per mirror.
 //
 // The VAULT is resolved from $BRAIN_ROOT (→ $CLAUDE_PROJECT_DIR → cwd) or --vault;
 // the script lives in the plugin, not the vault. Covered repos are auto-derived from
@@ -290,8 +291,28 @@ const isKnowledge = (f) => {
   const r = relative(VAULT, f).replace(/\\/g, '/');
   return r.startsWith('wiki/') && !META_FILES.has(basename(f));
 };
-const detachedKnowledge = components.slice(1).filter((c) => c.some(isKnowledge));
+// The "main" component is the largest one that actually contains a wiki note —
+// NOT simply the largest. A graph mirror can out-size the wiki (400+ community
+// stubs) while containing zero knowledge; treating it as main flagged the entire
+// wiki as a "detached cluster" on 2026-07-25. If the overall-largest component
+// has no wiki notes it's a mirror island: report that as its own finding.
+const mainIdx = components.findIndex((c) => c.some(isKnowledge));
+const detachedKnowledge = components.filter((c, i) => i !== mainIdx && c.some(isKnowledge));
+const mirrorIslands = mainIdx > 0 ? components.slice(0, mainIdx) : [];
 const commGhosts = [...ghostTargets].filter((t) => t.startsWith('_COMMUNITY_'));
+
+// ---- generic community labels -------------------------------------------------
+// A mirror whose report headings are all "Community N" means the graph was only
+// ever built by the no-LLM hook and the labeling pass never ran — the stubs are
+// unreadable and the mirror can't bridge into the wiki. Flag per repo.
+const genericLabelRepos = [];
+for (const repo of COVERED) {
+  const rp = join(VAULT, 'graphify', repo, `${repo}-GRAPH_REPORT.md`);
+  if (!existsSync(rp)) continue;
+  const labels = [...readFileSync(rp, 'utf8').matchAll(/^### Community \d+ - "(.+?)"/gm)].map((m) => m[1]);
+  if (labels.length && labels.every((l) => /^Community \d+$/.test(l)))
+    genericLabelRepos.push({ repo, count: labels.length });
+}
 
 // ---- report ------------------------------------------------------------------
 // Local date (matches the `date +%F` convention for notes/logs), not UTC —
@@ -309,6 +330,8 @@ L.push(
     `Stale (>${STALE_DAYS}d): ${stale.length} · Broken sources: ${brokenSources.length}` +
     ` · No tags: ${noTags.length}` +
     ` · Detached wiki clusters: ${detachedKnowledge.length}` +
+    (mirrorIslands.length ? ` · Mirror islands: ${mirrorIslands.length}` : '') +
+    (genericLabelRepos.length ? ` · Unlabeled graphs: ${genericLabelRepos.length}` : '') +
     (hotBloat.length ? ` · hot.md over budget: ${hotBloat[0].words}w` : '') +
     (noFrontmatter.length ? ` · No frontmatter: ${noFrontmatter.length}` : '')
 );
@@ -329,6 +352,11 @@ section('Notes missing `tags:`', noTags, (f) => `[${f}](${f})`);
 const singletons = [...tagCounts.entries()].filter(([, ns]) => ns.length === 1).sort();
 section('Singleton tags (used by one note — fold into the shared vocab or drop)', singletons, ([t, ns]) => `\`${t}\` — only on [${ns[0]}](${ns[0]})`);
 if (noFrontmatter.length) section('Notes missing frontmatter', noFrontmatter, (f) => `[${f}](${f})`);
+if (genericLabelRepos.length)
+  section('Graph mirrors with all-generic community labels (labeling pass never ran)', genericLabelRepos, (g) =>
+    `\`graphify/${g.repo}/\` — all ${g.count} communities are named "Community N". ` +
+    `Run the \`/graphify\` skill's labeling pass in that repo (the no-LLM post-commit hook never labels), ` +
+    `then resync the mirror and regenerate stubs.`);
 if (hotBloat.length)
   section('`hot.md` over word budget', hotBloat, (h) =>
     `[wiki/hot.md](wiki/hot.md) is **${h.words} words** — target ≤ ~500 (flagged above ${h.max}). ` +
@@ -344,12 +372,24 @@ L.push(
     `${ghostTargets.size} unresolved link targets` +
     (commGhosts.length ? ` (${commGhosts.length} \`_COMMUNITY_*\` — should be 0; check the stub generator)` : '')
 );
+if (mirrorIslands.length) {
+  L.push('');
+  L.push(
+    `⚠️ ${mirrorIslands.length} mirror island(s): component(s) larger than the wiki's that contain zero wiki notes. ` +
+    `The mirror isn't bridged into the knowledge graph — usually generic community labels (see above) or missing ` +
+    `\`Code:\` bridge links in the repo's stack-overview note.`
+  );
+  for (const c of mirrorIslands) {
+    const sample = c.map((f) => relative(VAULT, f).replace(/\\/g, '/')).slice(0, 3).join(', ');
+    L.push(`- [${c.length} files] e.g. ${sample}`);
+  }
+}
 if (detachedKnowledge.length) {
   L.push('');
   L.push(`⚠️ ${detachedKnowledge.length} detached cluster(s) containing a wiki note:`);
   for (const c of detachedKnowledge)
     L.push(`- [${c.length} files] ${c.filter(isKnowledge).map((f) => basename(f, '.md')).slice(0, 6).join(', ')}`);
-} else {
+} else if (!mirrorIslands.length) {
   L.push('All wiki notes are in the main connected component. ✅');
 }
 L.push('');
@@ -362,7 +402,8 @@ L.push('');
 
 const total =
   deadLinks.length + orphans.length + stale.length + brokenSources.length +
-  noFrontmatter.length + noTags.length + detachedKnowledge.length + hotBloat.length;
+  noFrontmatter.length + noTags.length + detachedKnowledge.length + hotBloat.length +
+  mirrorIslands.length + genericLabelRepos.length;
 L.push('---');
 L.push(total === 0 ? '✅ Clean — no issues found.' : `⚠️ ${total} item(s) to review.`);
 const report = L.join('\n') + '\n';

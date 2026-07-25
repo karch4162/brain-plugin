@@ -22,7 +22,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).
    - **Stale `last_verified`** — frontmatter dates older than the threshold (default 45 days).
    - **Broken `source:` anchors** — a `source:` file path that no longer exists in its repo (resolved against `REPOS_DIR`, default the vault's sibling dir).
    - **`hot.md` over word budget** — the rolling cache exceeds ~750 words (target ≤ ~500; `--hot-max-words` to tune). Means `/brain:save` has been appending instead of rewriting.
-   - Plus: missing tags, singleton tags, and whole-vault graph connectivity (detached wiki clusters).
+   - Plus: missing tags, singleton tags, and whole-vault graph connectivity — detached wiki clusters, **mirror islands** (largest component has zero wiki notes: the graph mirror is not bridged into the wiki), and **all-generic community labels** per mirror (labeling pass never ran).
 
 2. **Read the generated report** (`logs/freshness-<date>.md`) and present the findings grouped, **with a recommended disposition per item**, e.g.:
    - dead link → fix the link, create the missing note, or remove the reference?
