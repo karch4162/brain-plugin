@@ -120,10 +120,15 @@ export function resolveRepos(vault, searchRoots = []) {
   const identity = readJson(join(vault, 'repos.json'))?.repos || null;
   const cache = readJson(join(vault, 'repos.local.json')) || {};
   const paths = new Map();
+  // name → { root, subPath }. Callers verifying a pinned revision need the
+  // CHECKOUT ROOT (to run git in) and the subPath (to rebuild a repo-relative
+  // path) separately — the joined path in `paths` cannot be split back apart
+  // reliably on Windows.
+  const meta = new Map();
   const unresolved = [];
   let cacheChanged = false;
 
-  if (!identity) return { identity: null, paths, unresolved, cache, cacheChanged, discovered: null };
+  if (!identity) return { identity: null, paths, meta, unresolved, cache, cacheChanged, discovered: null };
 
   let discovered = null; // built lazily — scanning is the expensive part
   const discover = () => (discovered ??= discoverCheckouts(searchRoots));
@@ -138,6 +143,7 @@ export function resolveRepos(vault, searchRoots = []) {
       const root = sub ? cached.slice(0, cached.length - sub.length - 1) : cached;
       if (!want || remoteOf(root) === want) {
         paths.set(name, cached);
+        meta.set(name, { root, subPath: sub });
         continue;
       }
     }
@@ -156,10 +162,11 @@ export function resolveRepos(vault, searchRoots = []) {
       continue;
     }
     paths.set(name, full);
+    meta.set(name, { root, subPath: sub });
     if (cache[name] !== full) { cache[name] = full; cacheChanged = true; }
   }
 
-  return { identity, paths, unresolved, cache, cacheChanged, discovered };
+  return { identity, paths, meta, unresolved, cache, cacheChanged, discovered };
 }
 
 /**

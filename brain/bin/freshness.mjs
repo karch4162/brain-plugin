@@ -28,6 +28,28 @@
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join, basename, relative } from 'node:path';
 import { resolveRepos } from './resolve-repos.mjs';
+import { execFileSync } from 'node:child_process';
+
+/**
+ * Does `path` exist at `rev` in the repo at `root`?
+ *   true  — present at that revision
+ *   false — revision is known, path is not in it
+ *   null  — cannot tell (rev not fetched, git unavailable, not a repo)
+ * The three-way return is the point: "I don't have that commit" must never be
+ * reported as "that file is missing".
+ */
+function gitHas(root, rev, path) {
+  const run = (args) => {
+    try {
+      execFileSync('git', ['-C', root, ...args], { stdio: 'ignore', timeout: 10000 });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (!run(['cat-file', '-e', `${rev}^{commit}`])) return null; // rev unknown locally
+  return run(['cat-file', '-e', `${rev}:${path}`]);
+}
 
 const argv = process.argv.slice(2);
 const argVal = (flag) => (argv.indexOf(flag) >= 0 ? argv[argv.indexOf(flag) + 1] : undefined);
@@ -221,9 +243,21 @@ for (const n of parsed) {
   //    Conflating the two makes an engineer who simply hasn't cloned a repo see
   //    every note for it reported as rot, and acting on that queue means
   //    re-anchoring notes that were already correct.
-  if (n.fm.source) {
+  // A note may assert that its source is intentionally not in git (a scratch
+  // dir, a local-only config, a path the repo's .graphifyignore excludes as
+  // secret-shaped). Absence is the documented fact, so checking it is wrong.
+  const untracked = /^(true|yes)$/i.test(n.fm.source_untracked || '');
+  if (n.fm.source && !untracked) {
     for (const srcRaw of n.fm.source.split(';')) {
-      const src = srcRaw.trim().split('#')[0].trim().replace(/\s*\(.*$/, '');
+      let src = srcRaw.trim().split('#')[0].trim().replace(/\s*\(.*$/, '');
+      // Strip location suffixes that are NOT part of the filename:
+      //   path@<rev>  a pinned commit/branch — verified against git below
+      //   path:123    a line number in colon form (the #L123 form is already gone)
+      // Without this they are stat'd as literal filenames and always "missing".
+      let rev = null;
+      const revM = src.match(/@([0-9a-fA-F]{7,40}|(?:refs\/|origin\/)[\w./-]+)$/);
+      if (revM) { rev = revM[1]; src = src.slice(0, -revM[0].length); }
+      src = src.replace(/:\d+(-\d+)?$/, '');
       // URLs (with or without a scheme — `github.com/org/repo/...` is a link, not
       // a path), and prose → skip.
       if (!src || /^https?:\/\//i.test(src) || /^[\w-]+(\.[\w-]+)+\//.test(src) || !src.includes('/')) continue;
@@ -253,6 +287,21 @@ for (const n of parsed) {
         // in silence, so a report could look clean while anchors went unchecked.
         // Surface it: unverifiable, with the fix being a repos.json entry.
         unverifiableSources.push({ from: rel, source: src, repo: firstSeg, reason: 'unknown' });
+        continue;
+      }
+      if (rev) {
+        // A pinned revision is a claim about git history, not the working tree —
+        // the file may legitimately be absent from the current branch (an
+        // unmerged feature branch is exactly why anchors get pinned). Ask git.
+        const m = identity.meta.get(firstSeg);
+        if (!m) { unverifiableSources.push({ from: rel, source: srcRaw.trim(), repo: firstSeg, reason: 'unknown' }); continue; }
+        const inRepo = [m.subPath, src.split('/').slice(1).join('/')].filter(Boolean).join('/');
+        const seen = gitHas(m.root, rev, inRepo);
+        if (seen === null)
+          // Rev not present locally (never fetched, or pruned). Cannot be judged.
+          unverifiableSources.push({ from: rel, source: srcRaw.trim(), repo: firstSeg, reason: 'rev' });
+        else if (!seen)
+          brokenSources.push({ from: rel, source: srcRaw.trim(), looked: `${inRepo} @ ${rev}` });
         continue;
       }
       if (!existsSync(resolved))
@@ -388,8 +437,9 @@ section('Orphan notes (nothing links here)', orphans, (o) => `[${o}](${o})`);
 section(`Stale notes (last_verified > ${STALE_DAYS}d)`, stale, (s) => `[${s.from}](${s.from}) — last_verified ${s.date} (${s.age}d old)`);
 section('Broken `source:` anchors', brokenSources, (b) => `[${b.from}](${b.from}) — source \`${b.source}\` not found (looked: \`${b.looked}\`)`);
 if (unverifiableSources.length) {
-  const notCloned = unverifiableSources.filter((u) => u.reason !== 'unknown');
+  const notCloned = unverifiableSources.filter((u) => !u.reason);
   const unknown = unverifiableSources.filter((u) => u.reason === 'unknown');
+  const noRev = unverifiableSources.filter((u) => u.reason === 'rev');
   const names = (list) => [...new Set(list.map((u) => u.repo))].sort().map((r) => `\`${r}\``).join(', ');
   L.push(`## Unverifiable \`source:\` anchors (${unverifiableSources.length})`);
   L.push('');
@@ -407,6 +457,16 @@ if (unverifiableSources.length) {
     );
     L.push('');
     for (const u of notCloned) L.push(`- [${u.from}](${u.from}) — \`${u.source}\` (repo \`${u.repo}\` not checked out)`);
+    L.push('');
+  }
+  if (noRev.length) {
+    L.push(
+      `**Pinned revision not available locally (${noRev.length})** — the anchor pins a commit or branch this ` +
+        `checkout does not have (never fetched, or pruned). The file may well exist at that revision, so this is ` +
+        `**not** rot. \`git fetch\` the relevant remote and re-run to have these judged.`
+    );
+    L.push('');
+    for (const u of noRev) L.push(`- [${u.from}](${u.from}) — \`${u.source}\``);
     L.push('');
   }
   if (unknown.length) {
