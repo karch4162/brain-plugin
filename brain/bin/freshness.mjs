@@ -158,6 +158,7 @@ const deadLinks = [];
 const orphans = [];
 const stale = [];
 const brokenSources = [];
+const unverifiableSources = [];
 const noFrontmatter = [];
 const noTags = [];
 const tagCounts = new Map(); // tag → [note rel paths]
@@ -197,7 +198,11 @@ for (const n of parsed) {
     }
   }
 
-  // 4. broken source anchor (best-effort, file-path sources only)
+  // 4. source anchor — split "broken" (repo is here, file is gone) from
+  //    "unverifiable" (no local checkout, so we genuinely cannot tell).
+  //    Conflating the two makes an engineer who simply hasn't cloned a repo see
+  //    every note for it reported as rot, and acting on that queue means
+  //    re-anchoring notes that were already correct.
   if (n.fm.source) {
     for (const srcRaw of n.fm.source.split(';')) {
       const src = srcRaw.trim().split('#')[0].trim().replace(/\s*\(.*$/, '');
@@ -208,7 +213,12 @@ for (const n of parsed) {
       if (repoByName.has(firstSeg)) {
         resolved = join(repoByName.get(firstSeg), src.split('/').slice(1).join('/'));
       } else if (COVERED.includes(firstSeg)) {
-        resolved = join(REPOS_DIR, src);
+        // The repo is covered (it has a graphify/ mirror committed in the vault)
+        // but no checkout of it was found under REPOS_DIR. The mirror travels with
+        // the vault; the checkout does not. Absence of the file here is evidence
+        // of nothing — do not call it rot.
+        unverifiableSources.push({ from: rel, source: src, repo: firstSeg });
+        continue;
       } else if (existsSync(join(VAULT, src))) {
         resolved = join(VAULT, src);
       } else {
@@ -328,6 +338,7 @@ L.push(
   `**Scanned ${parsed.length} notes.** ` +
     `Dead links: ${deadLinks.length} · Orphans: ${orphans.length} · ` +
     `Stale (>${STALE_DAYS}d): ${stale.length} · Broken sources: ${brokenSources.length}` +
+    (unverifiableSources.length ? ` · Unverifiable sources: ${unverifiableSources.length}` : '') +
     ` · No tags: ${noTags.length}` +
     ` · Detached wiki clusters: ${detachedKnowledge.length}` +
     (mirrorIslands.length ? ` · Mirror islands: ${mirrorIslands.length}` : '') +
@@ -348,6 +359,21 @@ section('Dead `[[wikilinks]]`', deadLinks, (d) => `\`${d.target}\` — linked fr
 section('Orphan notes (nothing links here)', orphans, (o) => `[${o}](${o})`);
 section(`Stale notes (last_verified > ${STALE_DAYS}d)`, stale, (s) => `[${s.from}](${s.from}) — last_verified ${s.date} (${s.age}d old)`);
 section('Broken `source:` anchors', brokenSources, (b) => `[${b.from}](${b.from}) — source \`${b.source}\` not found (looked: \`${b.looked}\`)`);
+if (unverifiableSources.length) {
+  const byRepo = [...new Set(unverifiableSources.map((u) => u.repo))].sort();
+  L.push(`## Unverifiable \`source:\` anchors — no local checkout (${unverifiableSources.length})`);
+  L.push('');
+  L.push(
+    `_Not rot, and **not counted** in the review total. These notes anchor into ` +
+      `${byRepo.map((r) => `\`${r}\``).join(', ')} — covered by a \`graphify/\` mirror in this vault, but with no ` +
+      `checkout found under \`REPOS_DIR\` (\`${REPOS_DIR.replace(/\\/g, '/')}\`). The mirror travels with the vault; ` +
+      `the checkout does not, so their absence proves nothing. Clone the repo, or point \`REPOS_DIR\` at where it ` +
+      `lives, to have these checked for real._`
+  );
+  L.push('');
+  for (const u of unverifiableSources) L.push(`- [${u.from}](${u.from}) — source \`${u.source}\` (repo \`${u.repo}\` not checked out)`);
+  L.push('');
+}
 section('Notes missing `tags:`', noTags, (f) => `[${f}](${f})`);
 const singletons = [...tagCounts.entries()].filter(([, ns]) => ns.length === 1).sort();
 section('Singleton tags (used by one note — fold into the shared vocab or drop)', singletons, ([t, ns]) => `\`${t}\` — only on [${ns[0]}](${ns[0]})`);
@@ -414,6 +440,9 @@ if (TO_STDOUT) {
   const out = join(VAULT, 'logs', `freshness-${date}.md`);
   writeFileSync(out, report, 'utf8');
   console.log(`Freshness report written: ${relative(VAULT, out).replace(/\\/g, '/')}`);
-  console.log(`  ${total} issue(s) — dead:${deadLinks.length} orphan:${orphans.length} stale:${stale.length} src:${brokenSources.length}`);
+  console.log(
+    `  ${total} issue(s) — dead:${deadLinks.length} orphan:${orphans.length} stale:${stale.length} src:${brokenSources.length}` +
+      (unverifiableSources.length ? ` (+${unverifiableSources.length} unverifiable, no checkout)` : '')
+  );
 }
 process.exit(0);
