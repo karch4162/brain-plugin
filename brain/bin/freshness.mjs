@@ -27,6 +27,7 @@
 
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join, basename, relative } from 'node:path';
+import { resolveRepos } from './resolve-repos.mjs';
 
 const argv = process.argv.slice(2);
 const argVal = (flag) => (argv.indexOf(flag) >= 0 ? argv[argv.indexOf(flag) + 1] : undefined);
@@ -68,6 +69,19 @@ function resolveReposDir(vault, covered) {
 // devs check the same repo out under different folders (store-hub vs edge after a
 // rename), and broken-source results must not depend on whose laptop runs the scan.
 const repoByName = new Map();
+
+// Preferred: the vault's repos.json identity map (name → remote + subPath),
+// resolved per-repo against this machine. Handles repos that live at a sub-path
+// of a shared checkout, and repos that do not share a parent directory at all —
+// neither of which the REPOS_DIR-relative scan below can express. Read-only
+// here: /brain:init and /brain:doctor own writing repos.local.json, so a scan
+// never mutates the vault outside its own report.
+const identity = resolveRepos(VAULT, [REPOS_DIR, join(VAULT, '..')]);
+for (const [name, dir] of identity.paths) repoByName.set(name, dir);
+
+// Fallback for vaults with no repos.json: the original REPOS_DIR-relative scan,
+// keyed by folder name and by git remote. Kept so existing vaults keep working
+// unchanged until they are seeded.
 if (existsSync(REPOS_DIR)) {
   for (const e of readdirSync(REPOS_DIR, { withFileTypes: true })) {
     if (!e.isDirectory()) continue;
@@ -80,6 +94,10 @@ if (existsSync(REPOS_DIR)) {
     }
   }
 }
+
+// Repos the vault claims to cover: graphify/ mirrors plus anything named in
+// repos.json. A name here that did not resolve above is *unverifiable*, not rot.
+const CLAIMED = [...new Set([...COVERED, ...Object.keys(identity.identity || {})])];
 
 // ---- collect markdown files --------------------------------------------------
 function walk(dir, acc = []) {
@@ -206,17 +224,19 @@ for (const n of parsed) {
   if (n.fm.source) {
     for (const srcRaw of n.fm.source.split(';')) {
       const src = srcRaw.trim().split('#')[0].trim().replace(/\s*\(.*$/, '');
-      if (!src || /^https?:\/\//i.test(src) || !src.includes('/')) continue; // URLs/prose → skip
+      // URLs (with or without a scheme — `github.com/org/repo/...` is a link, not
+      // a path), and prose → skip.
+      if (!src || /^https?:\/\//i.test(src) || /^[\w-]+(\.[\w-]+)+\//.test(src) || !src.includes('/')) continue;
       // Resolve against a covered repo root, else against the vault.
       let resolved = null;
       const firstSeg = src.split('/')[0];
       if (repoByName.has(firstSeg)) {
         resolved = join(repoByName.get(firstSeg), src.split('/').slice(1).join('/'));
-      } else if (COVERED.includes(firstSeg)) {
-        // The repo is covered (it has a graphify/ mirror committed in the vault)
-        // but no checkout of it was found under REPOS_DIR. The mirror travels with
-        // the vault; the checkout does not. Absence of the file here is evidence
-        // of nothing — do not call it rot.
+      } else if (CLAIMED.includes(firstSeg)) {
+        // The vault claims this repo (a graphify/ mirror and/or a repos.json
+        // entry) but no checkout of it resolved on this machine. The mirror and
+        // the identity map travel with the vault; the checkout does not. Absence
+        // of the file here is evidence of nothing — do not call it rot.
         unverifiableSources.push({ from: rel, source: src, repo: firstSeg });
         continue;
       } else if (existsSync(join(VAULT, src))) {
@@ -227,7 +247,15 @@ for (const n of parsed) {
           if (existsSync(join(REPOS_DIR, repo, src))) { resolved = join(REPOS_DIR, repo, src); break; }
         }
       }
-      if (resolved && !existsSync(resolved))
+      if (!resolved) {
+        // Nothing claimed this anchor's first segment — it names a repo the vault
+        // has no mirror and no repos.json entry for. Previously this was dropped
+        // in silence, so a report could look clean while anchors went unchecked.
+        // Surface it: unverifiable, with the fix being a repos.json entry.
+        unverifiableSources.push({ from: rel, source: src, repo: firstSeg, reason: 'unknown' });
+        continue;
+      }
+      if (!existsSync(resolved))
         brokenSources.push({ from: rel, source: src, looked: relative(VAULT, resolved).replace(/\\/g, '/') });
     }
   }
@@ -360,19 +388,45 @@ section('Orphan notes (nothing links here)', orphans, (o) => `[${o}](${o})`);
 section(`Stale notes (last_verified > ${STALE_DAYS}d)`, stale, (s) => `[${s.from}](${s.from}) — last_verified ${s.date} (${s.age}d old)`);
 section('Broken `source:` anchors', brokenSources, (b) => `[${b.from}](${b.from}) — source \`${b.source}\` not found (looked: \`${b.looked}\`)`);
 if (unverifiableSources.length) {
-  const byRepo = [...new Set(unverifiableSources.map((u) => u.repo))].sort();
-  L.push(`## Unverifiable \`source:\` anchors — no local checkout (${unverifiableSources.length})`);
+  const notCloned = unverifiableSources.filter((u) => u.reason !== 'unknown');
+  const unknown = unverifiableSources.filter((u) => u.reason === 'unknown');
+  const names = (list) => [...new Set(list.map((u) => u.repo))].sort().map((r) => `\`${r}\``).join(', ');
+  L.push(`## Unverifiable \`source:\` anchors (${unverifiableSources.length})`);
   L.push('');
   L.push(
-    `_Not rot, and **not counted** in the review total. These notes anchor into ` +
-      `${byRepo.map((r) => `\`${r}\``).join(', ')} — covered by a \`graphify/\` mirror in this vault, but with no ` +
-      `checkout found under \`REPOS_DIR\` (\`${REPOS_DIR.replace(/\\/g, '/')}\`). The mirror travels with the vault; ` +
-      `the checkout does not, so their absence proves nothing. Clone the repo, or point \`REPOS_DIR\` at where it ` +
-      `lives, to have these checked for real._`
+    `_Not rot, and **not counted** in the review total — these could not be checked either way. ` +
+      `Never resolve one by editing the note; fix the resolution and re-run._`
   );
   L.push('');
-  for (const u of unverifiableSources) L.push(`- [${u.from}](${u.from}) — source \`${u.source}\` (repo \`${u.repo}\` not checked out)`);
-  L.push('');
+  if (notCloned.length) {
+    L.push(
+      `**No local checkout (${notCloned.length})** — ${names(notCloned)} ` +
+        `${notCloned.length === 1 ? 'is' : 'are'} claimed by this vault (a \`graphify/\` mirror and/or a \`repos.json\` ` +
+        `entry) but no checkout resolved on this machine. The mirror and the identity map travel with the vault; the ` +
+        `checkout does not. Clone the repo, or run \`resolve-repos.mjs --write\` with \`REPOS_DIR\` pointed at where it lives.`
+    );
+    L.push('');
+    for (const u of notCloned) L.push(`- [${u.from}](${u.from}) — \`${u.source}\` (repo \`${u.repo}\` not checked out)`);
+    L.push('');
+  }
+  if (unknown.length) {
+    // Grouped, not enumerated: this bucket is usually a handful of *conventions*
+    // affecting many notes at once, and a per-note dump of hundreds of lines is
+    // the same unusable queue this whole split exists to prevent.
+    const byPrefix = new Map();
+    for (const u of unknown) (byPrefix.get(u.repo) ?? byPrefix.set(u.repo, []).get(u.repo)).push(u);
+    L.push(
+      `**Unrecognized repo prefix (${unknown.length} anchor(s), ${byPrefix.size} prefix(es))** — these name no ` +
+        `\`graphify/\` mirror and no \`repos.json\` entry, so there is nothing to resolve them against. They were ` +
+        `previously dropped in **silence**: never checked, never reported, so a clean-looking report could hide them. ` +
+        `Fix by adding a \`repos.json\` entry for the prefix, or re-anchoring to a repo name the vault knows.`
+    );
+    L.push('');
+    for (const [prefix, items] of [...byPrefix.entries()].sort((a, b) => b[1].length - a[1].length)) {
+      L.push(`- \`${prefix}/…\` — **${items.length}** anchor(s), e.g. [${items[0].from}](${items[0].from}) → \`${items[0].source}\``);
+    }
+    L.push('');
+  }
 }
 section('Notes missing `tags:`', noTags, (f) => `[${f}](${f})`);
 const singletons = [...tagCounts.entries()].filter(([, ns]) => ns.length === 1).sort();
