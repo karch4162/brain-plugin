@@ -91,6 +91,16 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
    - `BRAIN_ROOT` is the **neutral** contract var (POC §16.1) — the scripts, skills, and any consumer read it. Do not use a consumer-namespaced name.
    - `REPOS_DIR` tells the sync/harvest/freshness scripts where the *code repos* live. **Do not assume a fixed layout** — infer a default (the parent dir of the project being wired, or the vault's parent), **show it, and let the user correct it**, then persist. The scripts also auto-detect repos one or two levels above the vault, so `REPOS_DIR` is only required when checkouts live somewhere non-standard — but persisting it removes the guess. Store it on the vault's registry entry too (`repos_dir`).
 
+6a. **Wire the vault to itself — write the same `env` block into the *vault's own* `.claude/settings.local.json`.** Step 6 binds the *project*; this binds the **vault**. Both are required, and skipping this one fails silently in a way that produces confidently wrong output.
+   ```json
+   { "env": { "BRAIN_ROOT": "<absolute vault path>", "REPOS_DIR": "<same value as step 6>" } }
+   ```
+   Create the file if missing, preserve existing keys, and use the identical OS-native paths from step 6. Also ensure `.claude/settings.local.json` is in the **vault's** `.gitignore` — it holds one machine's paths.
+
+   **Why this is not optional:** `/brain:freshness`, `/brain:tidy` and `/brain:save` are naturally run **from the vault directory**, where the project's settings do not apply. Without `REPOS_DIR` there, the scan falls back to auto-detect, which probes only `vault/..` and `vault/../..` — any other layout matches neither and it silently resolves to `vault/..`. Every `source:` anchor then fails to resolve. Measured on a real 361-note vault: **4 findings correctly bound vs 16 unbound**, including a flagged file that plainly existed. A tidy pass was run against that bad queue and re-anchored notes that were already correct. The scan reports a number either way — there is no error, which is exactly what makes it dangerous.
+
+   Verify before moving on: run `node "${CLAUDE_PLUGIN_ROOT}/bin/freshness.mjs" --stdout` from the vault and confirm the "Unverifiable `source:` anchors" section is absent or small. A large one means `REPOS_DIR` is still wrong.
+
 6b. **Record the graph scope — predetermined per stack, the engineer never picks.** Detect this repo's stack and look up its source roots from the **"Graph scope" table** in the vault's `CLAUDE.md` (Flutter `lib/`; Next `app/ components/ lib/ src/`; React/Node `src/`; Python the importable package dir; Unity `Assets/Scripts/`; …). If the stack is unknown, ask the user **once** for the source roots. **Record them** in the vault `CLAUDE.md` "Repos this brain covers" table (the **Scope** column) for this repo — that's the authoritative, reproducible scope. The build itself happens in `/brain:save` at this recorded scope, code-only (AST) — so it's identical for every teammate and nobody is ever prompted to choose.
 
 7. **Offer to seed the brain now (the first build).** Scaffolding + wiring alone leaves the vault **empty** — no code-graph mirror, no wiki notes — so it's useless to the next `/brain:resume` or query until something builds. Don't make the user stumble into that via a later `/brain:save`; **offer it here**, explicitly, via `AskUserQuestion`:
