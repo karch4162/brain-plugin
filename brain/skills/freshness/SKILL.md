@@ -21,12 +21,14 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).
    - **Orphan notes** — notes nothing links to (not in `index.md`/`hot.md`, not linked by any note).
    - **Stale `last_verified`** — frontmatter dates older than the threshold (default 45 days).
    - **Broken `source:` anchors** — a `source:` file path that no longer exists in its repo (resolved against `REPOS_DIR`, default the vault's sibling dir).
+   - **Unverifiable `source:` anchors** — the repo is covered (it has a `graphify/` mirror) but no checkout was found under `REPOS_DIR`, so the file's absence proves nothing. Reported separately and **not counted** as an issue. A run showing many of these usually means `REPOS_DIR` is wrong or the repo simply isn't cloned — fix that and re-run before acting on anything.
    - **`hot.md` over word budget** — the rolling cache exceeds ~750 words (target ≤ ~500; `--hot-max-words` to tune). Means `/brain:save` has been appending instead of rewriting.
    - Plus: missing tags, singleton tags, and whole-vault graph connectivity — detached wiki clusters, **mirror islands** (largest component has zero wiki notes: the graph mirror is not bridged into the wiki), and **all-generic community labels** per mirror (labeling pass never ran).
 
 2. **Read the generated report** (`logs/freshness-<date>.md`) and present the findings grouped, **with a recommended disposition per item**, e.g.:
    - dead link → fix the link, create the missing note, or remove the reference?
    - broken source → the source moved/was deleted; re-anchor `source:` or re-verify the fact?
+   - unverifiable source → **never** an edit to the note. Clone the repo or correct `REPOS_DIR`, then re-run.
    - stale → re-verify against current code and bump `last_verified`, or the fact is still true (just bump)?
    - orphan → add an `index.md` line / inbound link, or archive the note?
    - hot.md over budget → offer to prune it now: rewrite "Current focus" to what's actually current, drop prior-session bullets (history is in `logs/`), get it back under ~500 words.
