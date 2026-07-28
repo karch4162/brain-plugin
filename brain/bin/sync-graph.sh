@@ -46,6 +46,13 @@ if [[ "${1:-}" == "--no-commit" ]]; then
   shift
 fi
 
+# True if the report at $1 has at least one NON-generic community heading —
+# i.e. someone (LLM or /brain:label) actually named communities in it.
+has_named_labels() {
+  [[ -f "${1:-}" ]] || return 1
+  grep -E '^### Community [0-9]+ - "' "$1" 2>/dev/null | grep -Evq -- '- "Community [0-9]+"$'
+}
+
 repos=("$@")
 if [[ ${#repos[@]} -eq 0 ]]; then
   for d in "$VAULT"/graphify/*/; do
@@ -73,7 +80,19 @@ for repo in "${repos[@]}"; do
   cp "$src/graph.json" "$dst/graph.json"
   # Report is namespaced per repo in the vault so Obsidian's graph view and
   # quick-switcher don't collapse every repo's report to one "GRAPH_REPORT" node.
-  [[ -f "$src/GRAPH_REPORT.md" ]] && cp "$src/GRAPH_REPORT.md" "$dst/$name-GRAPH_REPORT.md"
+  #
+  # LABEL GUARD: never let a generic/missing incoming report clobber a labeled
+  # one. A keyless repo-side rebuild emits "Community N" placeholder headings,
+  # and copying that over a named report destroys the vault-side labels and
+  # breaks every Code: [[_COMMUNITY_*]] link built on them (the documented
+  # tray_pos_flutter incident). graph.json still syncs below either way; stubs
+  # regenerate from the preserved report + new graph (member-overlap matching
+  # keeps stub filenames stable).
+  if has_named_labels "$dst/$name-GRAPH_REPORT.md" && ! has_named_labels "$src/GRAPH_REPORT.md"; then
+    echo "preserving labeled report for $name (incoming is generic/missing) — run /brain:label $name to refresh labels" >&2
+  elif [[ -f "$src/GRAPH_REPORT.md" ]]; then
+    cp "$src/GRAPH_REPORT.md" "$dst/$name-GRAPH_REPORT.md"
+  fi
   rm -f "$dst/GRAPH_REPORT.md"  # drop legacy generic name if a prior sync left one
   [[ -f "$src/manifest.json" ]] && cp "$src/manifest.json" "$dst/manifest.json"
 
