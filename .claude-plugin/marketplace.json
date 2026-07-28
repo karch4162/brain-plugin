@@ -9,7 +9,7 @@
     {
       "name": "brain",
       "source": "./brain",
-      "description": "Standalone knowledge-substrate plugin: the 3-step graph→wiki→raw query rule, /init /save /resume /freshness /tidy /wiki-ingest /doctor skills, a self-gating graph-before-grep hook, the vault scaffolding + bin scripts, and a multi-vault registry for routing a project to the right brain (personal vs team). Version is intentionally NOT set here — it is resolved from brain/.claude-plugin/plugin.json (single source of truth); bump it there only.",
+      "description": "Standalone knowledge-substrate plugin: the 3-step graph→wiki→raw query rule, /init /save /resume /freshness /tidy /label /wiki-ingest /doctor skills, a self-gating graph-before-grep hook, the vault scaffolding + bin scripts, and a multi-vault registry for routing a project to the right brain (personal vs team). Version is intentionally NOT set here — it is resolved from brain/.claude-plugin/plugin.json (single source of truth); bump it there only.",
       "author": { "name": "Mason Beard", "email": "mason.beard@tray.com" },
       "license": "MIT",
       "category": "knowledge",

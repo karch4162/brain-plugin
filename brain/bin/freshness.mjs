@@ -567,9 +567,10 @@ if (noFrontmatter.length) section('Notes missing frontmatter', noFrontmatter, (f
 // resync replaces LLM-named stubs with "Community N" placeholders and breaks
 // Code: links). Never advise it here.
 const LABEL_FIX =
-  `Label it vault-side against the mirror — \`graphify label\` / \`graphify cluster-only --graph graphify/<repo>/graph.json\` — ` +
-  `then regenerate stubs with \`bin/build-community-notes.mjs <repo>\`. Do NOT resync the mirror to fix labels: a keyless ` +
-  `resync overwrites named community stubs with "Community N" placeholders.`;
+  `Run \`/brain:label <repo>\` — it names the communities vault-side from the mirror's graph.json (no checkout), ` +
+  `preserves any existing names, and regenerates the stubs. Do NOT resync the mirror to fix labels: a keyless ` +
+  `resync emits "Community N" placeholders (sync-graph.sh guards against clobbering a labeled report, but the ` +
+  `repo-side rebuild is still wasted work).`;
 if (noReportRepos.length)
   section('Graph mirrors never labeled (no community report)', noReportRepos, (g) =>
     `\`graphify/${g.repo}/\` — ${g.count} communities in graph.json but ${g.why}: no stubs, nothing queryable ` +
