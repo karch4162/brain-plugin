@@ -34,11 +34,14 @@
 
 import { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { foldCommunityName, nameKey } from './community-name.mjs';
 
 const VAULT = process.env.BRAIN_ROOT || process.env.CLAUDE_PROJECT_DIR || process.cwd();
 
 // Obsidian/Windows-illegal filename chars; trailing dots/spaces break Windows.
-const safeName = (name) => name.replace(/[\\/:*?"<>|#^[\]]/g, '-').replace(/[. ]+$/, '').trim();
+// Shared with label-communities.mjs so a label written into a report heading and
+// the file that heading's link must land on can never fold differently.
+const safeName = foldCommunityName;
 
 // Resolve a target name to its on-disk dir, report path, and the report's wikilink
 // basename (per-repo reports are namespaced <name>-GRAPH_REPORT; graphify-out's is the
@@ -140,6 +143,51 @@ for (const name of names) {
   for (const [rawName, ids] of byName) {
     memberSets.set(rawName, new Set(ids.flatMap(({ id }) => members.get(id) ?? []).map(nodeKey).filter(Boolean)));
   }
+  // ---- case-collision planning ----------------------------------------------
+  // Must run BEFORE prior-stub assignment: a colliding name is not allowed to
+  // keep (or reserve) a prior filename, so it must be excluded from the greedy
+  // match rather than opted out of afterwards — otherwise it reserves the base
+  // it is then forbidden to use, and takeBase appends a spurious " (2)".
+  //
+  // takeBase alone is not enough for collisions. It hands the BARE base to
+  // whichever community it reaches first and appends " (2)" to the next — but
+  // Obsidian resolves links case-insensitively and a real filename outranks an
+  // alias, so the report's [[_COMMUNITY_Close Day Bloc]] (community 123) lands on
+  // `_COMMUNITY_Close Day BLoC.md` (community 26). The `(2)` stub is then
+  // unreachable and the reader is silently shown the WRONG community — worse
+  // than a ghost link, because nothing looks broken.
+  //
+  // A link target that names two communities is ambiguous at the source; no
+  // filename scheme can resolve it. So instead: give every member of a colliding
+  // group an id-qualified name (stable — derived from community ids, not from
+  // iteration order), leave the bare name to a DISAMBIGUATION stub that links to
+  // all of them, and warn. Nothing silently wrong, nothing unreachable.
+  //
+  // The real fix is upstream — label-communities.mjs now uniquifies minted
+  // labels case-insensitively so brain-authored reports stop producing these.
+  // This path still catches reports graphify wrote, and pre-existing ones.
+  const linkOnly = [...labelToTargets.keys()].filter((l) => !byName.has(l));
+  const groups = new Map(); // nameKey(defaultBase) -> [rawName]
+  for (const n of [...byName.keys(), ...linkOnly]) {
+    const k = nameKey(`_COMMUNITY_${safeName(n)}`);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(n);
+  }
+  const collisions = new Map(); // rawName -> {bare, peers}
+  for (const [, list] of groups) {
+    if (list.length < 2) continue;
+    const bare = `_COMMUNITY_${safeName(list[0])}`;
+    for (const n of list) collisions.set(n, { bare, peers: list });
+  }
+
+  // Qualified base for a colliding name: community ids when we have them (stable
+  // across rebuilds), else the name's index in the group (link-only stubs).
+  const qualifiedBase = (rawName) => {
+    const { bare, peers } = collisions.get(rawName);
+    const ids = (byName.get(rawName) ?? []).map(({ id }) => id).sort((a, b) => a - b);
+    return ids.length ? `${bare} (c${ids.join('-')})` : `${bare} (link-only ${peers.indexOf(rawName) + 1})`;
+  };
+
   const candidates = [];
   for (const [rawName, set] of memberSets)
     for (const [base, p] of prior) {
@@ -163,7 +211,9 @@ for (const name of names) {
     return suffixed;
   };
   for (const c of candidates) {
-    if (assigned.has(c.rawName) || usedBases.has(c.base.toLowerCase())) continue;
+    // Collided names get an id-qualified base below; excluded here so they never
+    // reserve a base they are forbidden to use.
+    if (collisions.has(c.rawName) || assigned.has(c.rawName) || usedBases.has(c.base.toLowerCase())) continue;
     assigned.set(c.rawName, c);
     usedBases.set(c.base.toLowerCase(), 1);
   }
@@ -192,8 +242,10 @@ for (const name of names) {
     const m = fm.match(/^aliases:\s*\n((?:[ \t]*-[ \t]*.*\n?)+)/m);
     return m ? [...m[1].matchAll(/^[ \t]*-[ \t]*(.*)$/gm)].map((x) => x[1].trim().replace(/^"|"$/g, '')) : [];
   };
+  const baseByName = new Map(); // rawName -> fileBase actually written
   const writeStub = (rawName, fileBase, fm, bodyMid) => {
     writeFileSync(join(outDir, `${fileBase}.md`), `${fm}\n\n# ${rawName}\n${bodyMid}\nSee [[${backlink}]] for the full graph picture.\n`);
+    baseByName.set(rawName, fileBase);
     resolvable.add(fileBase);
     for (const a of fmAliases(fm)) resolvable.add(a);
     written++;
@@ -208,13 +260,20 @@ for (const name of names) {
     for (const n of nodes) if (n.source_file) fileCounts.set(n.source_file, (fileCounts.get(n.source_file) ?? 0) + 1);
     const topFiles = [...fileCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
     const match = assigned.get(rawName);
+    const collision = collisions.get(rawName);
     const defaultBase = `_COMMUNITY_${safeName(rawName)}`;
-    const fileBase = match ? match.base : takeBase(defaultBase);
-    const aliases = aliasesFor(rawName, fileBase);
+    // A colliding name may not keep a prior BARE filename — that name now belongs
+    // to the disambiguation stub, so stable-identity reuse yields to correctness.
+    const fileBase = collision ? takeBase(qualifiedBase(rawName)) : match ? match.base : takeBase(defaultBase);
+    // ...and it may not claim the bare name as an alias either, or it would
+    // shadow the disambiguation stub for anything resolving by alias.
+    const aliases = aliasesFor(rawName, fileBase).filter(
+      (a) => !collision || nameKey(a) !== nameKey(collision.bare)
+    );
     // Keep the prior (or suffix-de-duped) filename; the naive base the label
     // would have produced resolves via an alias, as does a changed prior label.
-    if (defaultBase !== fileBase && !aliases.includes(defaultBase)) aliases.push(defaultBase);
-    if (match) {
+    if (!collision && defaultBase !== fileBase && !aliases.includes(defaultBase)) aliases.push(defaultBase);
+    if (match && !collision) {
       if (match.priorLabel && match.priorLabel !== rawName) {
         const a = `_COMMUNITY_${match.priorLabel}`;
         if (a !== fileBase && !aliases.includes(a)) aliases.push(a);
@@ -241,12 +300,53 @@ ${topFiles.map(([f, c]) => `- \`${f}\` (${c} nodes)`).join('\n') || '- (no file-
     if (resolvable.has(defaultBase)) continue;
     // No existsSync check: it is case-insensitive on Windows/macOS and would drop
     // this stub (and its aliases) when a rich stub differs only by case.
-    const fileBase = takeBase(defaultBase);
-    const aliases = [...new Set([...[...targets].map((t) => `_COMMUNITY_${t}`), `_COMMUNITY_${label}`, defaultBase])].filter((a) => a !== fileBase);
+    const collision = collisions.get(label);
+    const fileBase = takeBase(collision ? qualifiedBase(label) : defaultBase);
+    const aliases = [...new Set([...[...targets].map((t) => `_COMMUNITY_${t}`), `_COMMUNITY_${label}`, defaultBase])]
+      .filter((a) => a !== fileBase)
+      .filter((a) => !collision || nameKey(a) !== nameKey(collision.bare));
     const fm = fmBlock([], 0, aliases);
     writeStub(label, fileBase, fm, `\n> Auto-generated stub for graph community "${label}" (${name}) — linked from the report without a detail section.\n`);
     minimal++;
   }
 
-  console.log(`${name}: ${written} community notes (${byName.size} detailed + ${minimal} link-only)`);
+  // 3) disambiguation stubs — one per case-colliding group, owning the bare name
+  //    the report's ambiguous [[link]] actually points at.
+  const groupsDone = new Set();
+  let disamb = 0;
+  for (const [rawName, { bare, peers }] of collisions) {
+    if (groupsDone.has(nameKey(bare))) continue;
+    groupsDone.add(nameKey(bare));
+    void rawName;
+    const rows = peers
+      .map((p) => ({ p, base: baseByName.get(p), ids: (byName.get(p) ?? []).map(({ id }) => id) }))
+      .filter((r) => r.base);
+    const fm = fmBlock([], 0, [], []);
+    const body = `
+> Auto-generated disambiguation stub (${name}). The report links
+> \`[[${bare}]]\`, but **${rows.length} distinct communities** fold to that name —
+> they differ only by case, which Obsidian and the filesystem treat as identical.
+> The link cannot say which one is meant, so it lands here.
+
+${rows.map((r) => `- [[${r.base}|${r.p}]]${r.ids.length ? ` — community ${r.ids.join(', ')}` : ' — link-only'}`).join('\n')}
+
+To retire this stub, give the communities distinct labels in the report
+(\`bin/label-communities.mjs\` uniquifies newly minted labels case-insensitively)
+and rebuild.
+`;
+    writeFileSync(join(outDir, `${bare}.md`), `${fm}\n\n# ${bare.replace(/^_COMMUNITY_/, '')} (ambiguous)\n${body}\nSee [[${backlink}]] for the full graph picture.\n`);
+    resolvable.add(bare);
+    written++;
+    disamb++;
+    console.error(
+      `warn ${name}: "${bare.replace(/^_COMMUNITY_/, '')}" names ${rows.length} communities ` +
+        `(${rows.map((r) => (r.ids.length ? `c${r.ids.join('/')}` : 'link-only')).join(', ')}) — ` +
+        `report link is ambiguous; wrote a disambiguation stub`
+    );
+  }
+
+  console.log(
+    `${name}: ${written} community notes (${byName.size} detailed + ${minimal} link-only` +
+      (disamb ? ` + ${disamb} disambiguation` : '') + ')'
+  );
 }
