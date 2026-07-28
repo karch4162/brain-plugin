@@ -47,6 +47,7 @@
 
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { foldLabel, nameKey } from './community-name.mjs';
 
 const argv = process.argv.slice(2);
 const argVal = (flag) => (argv.indexOf(flag) >= 0 ? argv[argv.indexOf(flag) + 1] : undefined);
@@ -57,16 +58,25 @@ const BATCH = 100; // graphify _LABEL_BATCH_SIZE — sized for one naming pass p
 const GENERIC = /^Community \d+$/;
 const HEADING = /^### Community (\d+) - "(.+?)"/gm; // same regex as build-community-notes + freshness
 
-// Labels must survive build-community-notes' safeName() (which strips
-// \ / : * ? " < > | # ^ [ ] from filenames) and the heading's `"…"` delimiters.
-const sanitizeLabel = (s) =>
-  String(s ?? '')
-    .replace(/[\r\n"]/g, ' ')
-    .replace(/[\\/:*?<>|#^[\]]/g, '-')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 60)
-    .trim();
+// Labels must survive the fold that build-community-notes applies to filenames,
+// and the heading's `"…"` delimiters. Both scripts import the SAME fold from
+// community-name.mjs — see that file for why a local copy is a bug factory.
+const sanitizeLabel = foldLabel;
+
+// A label is also an identity: build-community-notes MERGES every community
+// sharing a label into one stub note, and the filesystem/Obsidian treat names
+// that differ only by case as the same name. So a minted label that collides
+// with one already taken must be made distinct HERE, in the report — by the time
+// the stub generator sees two case-colliding labels the ambiguity is already
+// baked into the report's [[links]] and cannot be undone downstream.
+// (This is how "Close Day BLoC" and "Close Day Bloc" ended up as two communities
+// whose report links both pointed at one note.)
+function uniqueLabel(label, taken) {
+  let cand = label, i = 2;
+  while (taken.has(nameKey(cand))) cand = `${label} (${i++})`;
+  taken.add(nameKey(cand));
+  return cand;
+}
 
 // ---- mirror reading ----------------------------------------------------------
 
@@ -144,15 +154,11 @@ function deriveName(nodes, taken) {
     const parts = files[0].replace(/\\/g, '/').split('/');
     base = parts[parts.length - 1].replace(/\.[^.]+$/, '');
     if (!base) base = parts[parts.length - 2] ?? '';
-    const uniq = (c) => !taken.has(c.toLowerCase());
+    const uniq = (c) => !taken.has(nameKey(c));
     if (!uniq(sanitizeLabel(base)) && parts.length > 1) base = `${parts[parts.length - 2]} ${base}`;
   }
   if (!base) base = nodeKey(nodes[0]) || 'cluster';
-  let name = sanitizeLabel(base) || 'cluster';
-  let cand = name, i = 2;
-  while (taken.has(cand.toLowerCase())) cand = `${name} (${i++})`;
-  taken.add(cand.toLowerCase());
-  return cand;
+  return uniqueLabel(sanitizeLabel(base) || 'cluster', taken);
 }
 
 // Split one mirror's communities into preserved / to-name / derived.
@@ -167,7 +173,7 @@ function classify(repo, m) {
   unnamed.sort((a, b) => b.nodes.length - a.nodes.length);
   const llm = unnamed.slice(0, TOP_K);
   const tail = unnamed.slice(TOP_K);
-  const taken = new Set(Object.values(preserved).map((l) => l.toLowerCase()));
+  const taken = new Set(Object.values(preserved).map((l) => nameKey(l)));
   const derived = {};
   for (const { id, nodes } of tail) derived[id] = deriveName(nodes, taken);
   const batches = [];
@@ -262,15 +268,21 @@ if (argv.includes('--apply')) {
   // deterministically, largest community first.
   const { preserved } = classify(repo, m);
   const finalLabels = {};
-  const taken = new Set(Object.values(preserved).map((l) => l.toLowerCase()));
-  let named = 0, invalid = 0;
+  const taken = new Set(Object.values(preserved).map((l) => nameKey(l)));
+  let named = 0, invalid = 0, collided = 0;
   const bySize = [...m.members.keys()].sort((a, b) => m.members.get(b).length - m.members.get(a).length);
   for (const id of bySize) {
     if (preserved[id] !== undefined) { finalLabels[id] = preserved[id]; continue; }
     const raw = agent[id] ?? agent[String(id)];
     const clean = sanitizeLabel(raw);
-    if (clean && !GENERIC.test(clean)) { finalLabels[id] = clean; taken.add(clean.toLowerCase()); named++; }
-    else {
+    if (clean && !GENERIC.test(clean)) {
+      // Case-insensitive: an agent label that only differs in case from one
+      // already taken is the same stub filename, so it must be disambiguated.
+      const uniqued = uniqueLabel(clean, taken);
+      if (uniqued !== clean) collided++;
+      finalLabels[id] = uniqued;
+      named++;
+    } else {
       if (raw !== undefined) invalid++;
       finalLabels[id] = deriveName(m.members.get(id), taken);
     }
@@ -284,6 +296,7 @@ if (argv.includes('--apply')) {
     `${repo}: ${m.members.size} communities — ${Object.keys(preserved).length} preserved, ` +
       `${named} agent-named, ${m.members.size - Object.keys(preserved).length - named} derived` +
       (invalid ? ` (${invalid} agent label(s) invalid/generic → derived fallback)` : '') +
+      (collided ? ` (${collided} agent label(s) collided case-insensitively → suffixed)` : '') +
       ` → ${m.reportPath.replace(/\\/g, '/')}`
   );
   console.log(`next: BRAIN_ROOT="${VAULT}" node build-community-notes.mjs ${repo}   # regenerate stubs`);
