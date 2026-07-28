@@ -23,6 +23,25 @@ Optional arg = one draft name or `all` (default: all). For each `wiki/_drafts/*.
 
 **Stale-draft rule (TTL 14 days):** a draft older than 14 days gets no special mercy — it has already proven nothing reads it in staging. Recommend **promote or drop, never "leave in staging"** for these; say so explicitly in the triage row.
 
+### 1b. Check for open PRs touching the same files
+
+`main` being current does **not** mean a note is uncontested. Before triaging, intersect what you are about to write against every open PR:
+
+```bash
+git fetch --prune
+for n in $(gh pr list --json number --jq '.[].number'); do
+  echo "--- #$n"; gh pr diff "$n" --name-only
+done
+```
+
+Compare that against the drafts you intend to move, their target paths, and `wiki/index.md`.
+
+- **Overlap → stop and surface it** as a triage blocker before asking for any keep/merge/drop decision. Show the PR number, title, and the shared file. Let the user sequence: usually land the other PR first and rebase, since a PR editing a note's *facts* is foundational to promoting it.
+- **No overlap → print nothing.** Silence is what keeps this check credible; a banner on every run gets tuned out.
+- `gh` missing, unauthed, or offline → say so in one line and continue. Degraded, not blocked.
+
+> Why this exists: on 2026-07-28 a promote graduated a draft to trusted while an open PR — opened 45 minutes earlier — was correcting that same note's facts. The promotion shipped wrong content and had to be rebased. Freshness can't catch this; only the PR list can.
+
 ### 2. Triage — keep / merge / drop, per draft
 
 Present a recommendation per draft (`promote to wiki/<area>/` · `merge into [[existing-note]]` · `drop: <reason>`) and collect the user's decisions — one `AskUserQuestion` batch or a pre-authorized rule ("promote all your recommends, drop the rest") is fine. No decision → the draft stays untouched and is reported as still-pending.

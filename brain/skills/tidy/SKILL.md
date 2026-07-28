@@ -38,6 +38,23 @@ Read the report and split every finding into **auto-fixable** vs **judgment** (b
 
 - Dead `[[wikilinks]]` (is the fact gone, or the note unwritten?), stale `last_verified` (needs re-verification against code), any broken source whose repo isn't cloned locally at all (the fix is a clone, not a rewrite), note deletion/archival of any kind, singleton tags with no clear canonical.
 
+### 2b. Check for open PRs touching the same notes
+
+Tidy rewrites frontmatter in **trusted** notes, so a concurrent PR on the same file is a real collision. Before proposing the batch:
+
+```bash
+git fetch --prune
+for n in $(gh pr list --json number --jq '.[].number'); do
+  echo "--- #$n"; gh pr diff "$n" --name-only
+done
+```
+
+Intersect with every note in the planned batch, plus `wiki/index.md`.
+
+- **Overlap → drop those notes from the auto-fixable set** and list them as blocked, with the PR number. Tidy is a mechanical lane; a contested file is by definition not mechanical. The rest of the batch proceeds.
+- **No overlap → print nothing.**
+- `gh` missing, unauthed, or offline → one line saying the check was skipped, then continue.
+
 ### 3. Propose one batch, get one approval
 
 Before touching anything, show the full plan compactly: N anchors rewritten (with the prefix rule), M hub notes created (named, with member counts), K tag folds (old→new), and the judgment items left for the user. **Wait for a yes.** If the user pre-authorized ("just fix the obvious ones"), proceed.
