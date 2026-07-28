@@ -28,7 +28,7 @@
 
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join, basename, relative } from 'node:path';
-import { resolveRepos } from './resolve-repos.mjs';
+import { resolveRepos, normalizeRemote } from './resolve-repos.mjs';
 import { execFileSync } from 'node:child_process';
 
 /**
@@ -122,6 +122,20 @@ if (existsSync(REPOS_DIR)) {
 // repos.json. A name here that did not resolve above is *unverifiable*, not rot.
 const CLAIMED = [...new Set([...COVERED, ...Object.keys(identity.identity || {})])];
 
+// Entry name (lowercased) → normalized remote, for the area cross-check below.
+// repos.json may contain SUB-PATH ALIASES — entries like `docs` or `lib` that are
+// directories inside some repo, not repos themselves. An alias globally reserves
+// its first segment across EVERY note in the vault, so an anchor written relative
+// to the note's own repo (`docs/x.md` meaning tray-insight's docs/) silently
+// resolves into the alias's repo instead. If a same-named file happens to exist
+// there it verifies GREEN against the wrong repo — the invisible direction.
+// Comparing REMOTES (not names) keeps legitimate same-checkout aliases quiet:
+// a kds note anchored `android/…` matches because KDS and the android alias both
+// live in the monorepo remote.
+const remoteByName = new Map();
+for (const [name, spec] of Object.entries(identity.identity || {}))
+  remoteByName.set(name.toLowerCase(), normalizeRemote(spec?.remote));
+
 // ---- collect markdown files --------------------------------------------------
 function walk(dir, acc = []) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -200,6 +214,7 @@ const orphans = [];
 const stale = [];
 const brokenSources = [];
 const unverifiableSources = [];
+const areaMismatchSources = [];
 const noFrontmatter = [];
 const noTags = [];
 const tagCounts = new Map(); // tag → [note rel paths]
@@ -265,6 +280,23 @@ for (const n of parsed) {
       // Resolve against a covered repo root, else against the vault.
       let resolved = null;
       const firstSeg = src.split('/')[0];
+      // Cross-check the note's wiki area against the repo the anchor resolves
+      // into — BEFORE any file check, because the dangerous direction is a
+      // FALSE GREEN: a `docs/x.md` anchor in wiki/tray-insight/ resolving into
+      // tray-architecture (the `docs` alias) verifies healthy whenever a
+      // same-named file exists there, and nothing else will ever surface it.
+      // Different remotes is the signal; existence of the file is moot. The
+      // fix is a qualified anchor (`tray-insight/docs/x.md`), never a note edit
+      // to whatever path the alias happens to point at.
+      {
+        const areaM = rel.match(/^wiki\/([^/]+)\//);
+        const areaRemote = areaM ? remoteByName.get(areaM[1].toLowerCase()) : undefined;
+        const anchorRemote = remoteByName.get(firstSeg.toLowerCase());
+        if (areaRemote && anchorRemote && areaRemote !== anchorRemote) {
+          areaMismatchSources.push({ from: rel, source: src, repo: firstSeg, area: areaM[1] });
+          continue;
+        }
+      }
       if (repoByName.has(firstSeg)) {
         resolved = join(repoByName.get(firstSeg), src.split('/').slice(1).join('/'));
       } else if (CLAIMED.includes(firstSeg)) {
@@ -435,6 +467,7 @@ L.push(
   `**Scanned ${parsed.length} notes.** ` +
     `Dead links: ${deadLinks.length} · Orphans: ${orphans.length} · ` +
     `Stale (>${STALE_DAYS}d): ${stale.length} · Broken sources: ${brokenSources.length}` +
+    (areaMismatchSources.length ? ` · Wrong-repo anchors: ${areaMismatchSources.length}` : '') +
     (unverifiableSources.length ? ` · Unverifiable sources: ${unverifiableSources.length}` : '') +
     ` · No tags: ${noTags.length}` +
     ` · Detached wiki clusters: ${detachedKnowledge.length}` +
@@ -457,6 +490,21 @@ section('Dead `[[wikilinks]]`', deadLinks, (d) => `\`${d.target}\` — linked fr
 section('Orphan notes (nothing links here)', orphans, (o) => `[${o}](${o})`);
 section(`Stale notes (last_verified > ${STALE_DAYS}d)`, stale, (s) => `[${s.from}](${s.from}) — last_verified ${s.date} (${s.age}d old)`);
 section('Broken `source:` anchors', brokenSources, (b) => `[${b.from}](${b.from}) — source \`${b.source}\` not found (looked: \`${b.looked}\`)`);
+if (areaMismatchSources.length) {
+  L.push(`## \`source:\` anchors resolving into a different repo than the note's area (${areaMismatchSources.length})`);
+  L.push('');
+  L.push(
+    `_The anchor's first segment maps (via \`repos.json\`) to a repo with a **different remote** than the ` +
+      `note's own \`wiki/<area>/\`. Usually the anchor was written relative to the note's repo but its first ` +
+      `segment collides with a \`repos.json\` sub-path alias — so it resolves elsewhere, and **would verify ` +
+      `healthy against the wrong repo's file** if the names collide. Fix by qualifying the anchor with its ` +
+      `repo name (\`<repo>/<path>\`); the file was NOT checked either way._`
+  );
+  L.push('');
+  for (const a of areaMismatchSources)
+    L.push(`- [${a.from}](${a.from}) — \`${a.source}\` resolves into \`${a.repo}\`'s repo, but the note lives in \`wiki/${a.area}/\``);
+  L.push('');
+}
 if (unverifiableSources.length) {
   const notCloned = unverifiableSources.filter((u) => !u.reason);
   const unknown = unverifiableSources.filter((u) => u.reason === 'unknown');
@@ -574,6 +622,7 @@ L.push('');
 
 const total =
   deadLinks.length + orphans.length + stale.length + brokenSources.length +
+  areaMismatchSources.length +
   noFrontmatter.length + noTags.length + detachedKnowledge.length + hotBloat.length +
   mirrorIslands.length + genericLabelRepos.length + noReportRepos.length;
 L.push('---');
