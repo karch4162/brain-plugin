@@ -11,7 +11,8 @@
 //   4. Broken source anchors— a `source:` file path that no longer exists on disk
 //   5. hot.md over budget   — the rolling cache exceeds its word budget (accretion)
 //   + missing/singleton tags, whole-vault graph connectivity (detached wiki
-//     clusters + mirror islands), and all-generic community labels per mirror.
+//     clusters + mirror islands), and community labeling health per mirror
+//     (never labeled — no report at all — vs all-generic "Community N" labels).
 //
 // The VAULT is resolved from $BRAIN_ROOT (→ $CLAUDE_PROJECT_DIR → cwd) or --vault;
 // the script lives in the plugin, not the vault. Covered repos are auto-derived from
@@ -388,17 +389,36 @@ const detachedKnowledge = components.filter((c, i) => i !== mainIdx && c.some(is
 const mirrorIslands = mainIdx > 0 ? components.slice(0, mainIdx) : [];
 const commGhosts = [...ghostTargets].filter((t) => t.startsWith('_COMMUNITY_'));
 
-// ---- generic community labels -------------------------------------------------
-// A mirror whose report headings are all "Community N" means the graph was only
-// ever built by the no-LLM hook and the labeling pass never ran — the stubs are
-// unreadable and the mirror can't bridge into the wiki. Flag per repo.
+// ---- community labeling health --------------------------------------------------
+// Two distinct failure shapes, and "no report" is strictly WORSE than "generic
+// labels" — no report means no community stubs either, so nothing is queryable
+// at community level. The old check parsed only the report, so a mirror with no
+// report yielded zero labels and was silently skipped: on a real vault that hid
+// the three LARGEST graphs while the report flagged five smaller ones. Absence
+// of evidence must never render as a clean bill of health, so the community
+// count comes from graph.json (always present in a mirror — sync-graph.sh
+// refuses to sync without it), never from the report being judged.
 const genericLabelRepos = [];
+const noReportRepos = [];
 for (const repo of COVERED) {
-  const rp = join(VAULT, 'graphify', repo, `${repo}-GRAPH_REPORT.md`);
-  if (!existsSync(rp)) continue;
-  const labels = [...readFileSync(rp, 'utf8').matchAll(/^### Community \d+ - "(.+?)"/gm)].map((m) => m[1]);
-  if (labels.length && labels.every((l) => /^Community \d+$/.test(l)))
-    genericLabelRepos.push({ repo, count: labels.length });
+  const dir = join(VAULT, 'graphify', repo);
+  const gp = join(dir, 'graph.json');
+  if (!existsSync(gp)) continue; // not a mirror (stray folder under graphify/)
+  let commCount = 0;
+  try {
+    const nodes = JSON.parse(readFileSync(gp, 'utf8')).nodes ?? [];
+    commCount = new Set(nodes.map((n) => n.community).filter((c) => c !== undefined && c !== null)).size;
+  } catch { continue; } // unparseable graph.json — can't judge this mirror
+  if (!commCount) continue; // graph was never clustered; nothing to label yet
+  const rp = join(dir, `${repo}-GRAPH_REPORT.md`);
+  const labels = existsSync(rp)
+    ? [...readFileSync(rp, 'utf8').matchAll(/^### Community \d+ - "(.+?)"/gm)].map((m) => m[1])
+    : null;
+  if (labels === null || !labels.length)
+    // No report, or a report with no community sections: labeling never ran at all.
+    noReportRepos.push({ repo, count: commCount, why: labels === null ? 'no report' : 'report has no community sections' });
+  else if (labels.every((l) => /^Community \d+$/.test(l)))
+    genericLabelRepos.push({ repo, count: commCount });
 }
 
 // ---- report ------------------------------------------------------------------
@@ -419,6 +439,7 @@ L.push(
     ` · No tags: ${noTags.length}` +
     ` · Detached wiki clusters: ${detachedKnowledge.length}` +
     (mirrorIslands.length ? ` · Mirror islands: ${mirrorIslands.length}` : '') +
+    (noReportRepos.length ? ` · Graphs never labeled (no report): ${noReportRepos.length}` : '') +
     (genericLabelRepos.length ? ` · Unlabeled graphs: ${genericLabelRepos.length}` : '') +
     (hotBloat.length ? ` · hot.md over budget: ${hotBloat[0].words}w` : '') +
     (noFrontmatter.length ? ` · No frontmatter: ${noFrontmatter.length}` : '')
@@ -492,11 +513,22 @@ section('Notes missing `tags:`', noTags, (f) => `[${f}](${f})`);
 const singletons = [...tagCounts.entries()].filter(([, ns]) => ns.length === 1).sort();
 section('Singleton tags (used by one note — fold into the shared vocab or drop)', singletons, ([t, ns]) => `\`${t}\` — only on [${ns[0]}](${ns[0]})`);
 if (noFrontmatter.length) section('Notes missing frontmatter', noFrontmatter, (f) => `[${f}](${f})`);
+// Labeling remediation is deliberately VAULT-side: the mirror's graph.json
+// carries every node's community id, so naming communities needs no repo
+// checkout — and "resync the mirror" is the known-destructive step (a keyless
+// resync replaces LLM-named stubs with "Community N" placeholders and breaks
+// Code: links). Never advise it here.
+const LABEL_FIX =
+  `Label it vault-side against the mirror — \`graphify label\` / \`graphify cluster-only --graph graphify/<repo>/graph.json\` — ` +
+  `then regenerate stubs with \`bin/build-community-notes.mjs <repo>\`. Do NOT resync the mirror to fix labels: a keyless ` +
+  `resync overwrites named community stubs with "Community N" placeholders.`;
+if (noReportRepos.length)
+  section('Graph mirrors never labeled (no community report)', noReportRepos, (g) =>
+    `\`graphify/${g.repo}/\` — ${g.count} communities in graph.json but ${g.why}: no stubs, nothing queryable ` +
+    `at community level. ${LABEL_FIX}`);
 if (genericLabelRepos.length)
   section('Graph mirrors with all-generic community labels (labeling pass never ran)', genericLabelRepos, (g) =>
-    `\`graphify/${g.repo}/\` — all ${g.count} communities are named "Community N". ` +
-    `Run the \`/graphify\` skill's labeling pass in that repo (the no-LLM post-commit hook never labels), ` +
-    `then resync the mirror and regenerate stubs.`);
+    `\`graphify/${g.repo}/\` — all ${g.count} communities are named "Community N". ${LABEL_FIX}`);
 if (hotBloat.length)
   section('`hot.md` over word budget', hotBloat, (h) =>
     `[wiki/hot.md](wiki/hot.md) is **${h.words} words** — target ≤ ~500 (flagged above ${h.max}). ` +
@@ -543,7 +575,7 @@ L.push('');
 const total =
   deadLinks.length + orphans.length + stale.length + brokenSources.length +
   noFrontmatter.length + noTags.length + detachedKnowledge.length + hotBloat.length +
-  mirrorIslands.length + genericLabelRepos.length;
+  mirrorIslands.length + genericLabelRepos.length + noReportRepos.length;
 L.push('---');
 L.push(total === 0 ? '✅ Clean — no issues found.' : `⚠️ ${total} item(s) to review.`);
 const report = L.join('\n') + '\n';
