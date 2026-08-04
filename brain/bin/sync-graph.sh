@@ -46,11 +46,19 @@ if [[ "${1:-}" == "--no-commit" ]]; then
   shift
 fi
 
-# True if the report at $1 has at least one NON-generic community heading —
-# i.e. someone (LLM or /brain:label) actually named communities in it.
-has_named_labels() {
-  [[ -f "${1:-}" ]] || return 1
-  grep -E '^### Community [0-9]+ - "' "$1" 2>/dev/null | grep -Evq -- '- "Community [0-9]+"$'
+# Prints how many NON-generic community headings the report at $1 has — i.e. how
+# many communities someone (LLM or /brain:label) actually named in it. A missing,
+# unreadable or empty file counts as 0. Always exits 0, always prints one integer.
+count_named_labels() {
+  local file="${1:-}" n
+  if [[ ! -f "$file" || ! -r "$file" ]]; then
+    echo 0
+    return 0
+  fi
+  n="$(grep -E '^### Community [0-9]+ - "' "$file" 2>/dev/null | grep -Evc -- '- "Community [0-9]+"$' || true)"
+  n="${n//[^0-9]/}"
+  echo "${n:-0}"
+  return 0
 }
 
 repos=("$@")
@@ -81,17 +89,24 @@ for repo in "${repos[@]}"; do
   # Report is namespaced per repo in the vault so Obsidian's graph view and
   # quick-switcher don't collapse every repo's report to one "GRAPH_REPORT" node.
   #
-  # LABEL GUARD: never let a generic/missing incoming report clobber a labeled
-  # one. A keyless repo-side rebuild emits "Community N" placeholder headings,
-  # and copying that over a named report destroys the vault-side labels and
-  # breaks every Code: [[_COMMUNITY_*]] link built on them (the documented
-  # tray_pos_flutter incident). graph.json still syncs below either way; stubs
-  # regenerate from the preserved report + new graph (member-overlap matching
-  # keeps stub filenames stable).
-  if has_named_labels "$dst/$name-GRAPH_REPORT.md" && ! has_named_labels "$src/GRAPH_REPORT.md"; then
-    echo "preserving labeled report for $name (incoming is generic/missing) — run /brain:label $name to refresh labels" >&2
-  elif [[ -f "$src/GRAPH_REPORT.md" ]]; then
-    cp "$src/GRAPH_REPORT.md" "$dst/$name-GRAPH_REPORT.md"
+  # LABEL GUARD: never let a LESS-labeled incoming report clobber a more-labeled
+  # one. This is a COMPARISON, not an existence check: a keyless repo-side rebuild
+  # can emit a handful of named headings alongside hundreds of "Community N"
+  # placeholders, and copying that over a fully named report destroys the
+  # vault-side labels and breaks every Code: [[_COMMUNITY_*]] link built on them
+  # (the documented tray_pos_flutter incident). So we copy only when the incoming
+  # report names at least as many communities as the existing one — an equal count
+  # (a same-count relabel or plain content refresh) still copies. graph.json syncs
+  # below either way; stubs regenerate from the preserved report + new graph
+  # (member-overlap matching keeps stub filenames stable).
+  if [[ -f "$src/GRAPH_REPORT.md" ]]; then
+    existing_named="$(count_named_labels "$dst/$name-GRAPH_REPORT.md")"
+    incoming_named="$(count_named_labels "$src/GRAPH_REPORT.md")"
+    if (( incoming_named < existing_named )); then
+      echo "preserving labeled report for $name: incoming has $incoming_named named communities, existing has $existing_named — run /brain:label $name to refresh labels" >&2
+    else
+      cp "$src/GRAPH_REPORT.md" "$dst/$name-GRAPH_REPORT.md"
+    fi
   fi
   rm -f "$dst/GRAPH_REPORT.md"  # drop legacy generic name if a prior sync left one
   [[ -f "$src/manifest.json" ]] && cp "$src/manifest.json" "$dst/manifest.json"

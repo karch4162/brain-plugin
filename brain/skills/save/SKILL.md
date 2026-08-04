@@ -11,6 +11,16 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 
 ## What to do when invoked
 
+0. **Check branch freshness before touching `wiki/hot.md`.** Step 3 **rewrites** hot.md, so a stale base silently reverts whatever anyone else landed on it. Don't reason about this — run the guard, which brings the branch up to date on its own when that's safe:
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/check-freshness.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
+   ```
+   - **Exit `0` (`FRESHNESS: OK`) →** the base is current (fast-forwarded, merged, or already up to date). Do the whole save, step 3 included.
+   - **Exit `1` (`FRESHNESS: BLOCKED`) →** skip **step 3 only**. Relay the script's `FRESHNESS: BLOCKED` line to the user **verbatim** — it names the branch, the counts and the remedy; do not paraphrase or re-derive it — and report the skipped hot.md refresh in the output block.
+   - **Only the hot.md rewrite is gated.** The session log (step 2), the `wiki/log.md` line (step 4) and the graph builds/sync (steps 5–5c) are **append-only or additive** — a stale base cannot revert anything through them, so they **always** run.
+
+   Offline, no origin, or not a git repo exits `0` — this is a guard, not a network dependency. `--no-merge` reports without mutating.
+
 1. **Get today's date** (do not guess):
    ```bash
    date +%F
@@ -37,9 +47,11 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    Be honest in "Pending" — this is what `/brain:resume` surfaces next time. Don't claim things are done that aren't.
 
 3. **Refresh `wiki/hot.md` — rewrite, never append.** This is a *rolling cache*, not a log; the session history already lives in `logs/` (step 2), so nothing is lost by deleting from here. Concretely:
+   - **First: `git status --porcelain wiki/hot.md`.** Uncommitted edits here are about to be overwritten by the rewrite and are **not recoverable** — step 0's guard only catches the committed kind. If the file is dirty, show `git diff wiki/hot.md` and ask before continuing; if it's this session's own work in progress, continue.
    - Update the `_Last refreshed:_` date.
    - **Rewrite** "Current focus" to only what is actually in flight *now*. **Delete** any bullet describing a prior session or work that's finished — do not add "Prior session:" bullets, ever.
    - **Hard budget: after your edit, the whole file must be ≤ ~500 words.** If it's over, keep cutting — oldest/stalest bullets first — until it isn't. Roughly: if a bullet wouldn't change what the next session does, it goes.
+   - **Measure it — don't eyeball it.** After every edit to the file, run `wc -w wiki/hot.md`; if the count is over 500, cut and re-run until it isn't. The budget is not met until the command says so.
    - Why this is enforced: `/brain:resume` reads this file first every session, and step 5c re-extracts it into the wiki concept graph on every save — a bloated hot.md makes *every* future save slower and noisier. `/brain:freshness` flags the file when it exceeds ~750 words; treat that finding as "this step was skipped."
 
 4. **Append one line to `wiki/log.md`** (append-only operation log), e.g.:
@@ -90,7 +102,8 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 
 ```
 Saved. Log: logs/<date>-<slug>.md
-hot.md refreshed · log.md appended
+Freshness: <up to date | fast-forwarded from origin/main | BLOCKED — <script's reason>>
+hot.md <refreshed | refresh SKIPPED (branch not fresh)> · log.md appended
 Graph sync: <synced repos | not needed this session>
 Committed locally (not pushed). Open loops carried forward: <n>
 ```

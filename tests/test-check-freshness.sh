@@ -1,0 +1,417 @@
+#!/usr/bin/env bash
+# test-check-freshness.sh — deterministic quality gate for brain/bin/check-freshness.sh
+#
+# /brain:save REWRITES wiki/hot.md. Saving from a branch that is behind
+# origin/main therefore silently reverts other people's edits. check-freshness.sh
+# gets the branch current when it safely can, and blocks the hot.md rewrite when
+# it can't.
+#
+# Contract under test:
+#   exit 0 => safe to rewrite wiki/hot.md
+#   exit 1 => do NOT rewrite wiki/hot.md (the rest of the save still proceeds)
+#   first line of output starts with `FRESHNESS: OK` (stdout)
+#                                 or `FRESHNESS: BLOCKED` (stderr)
+#   vault resolved from $BRAIN_ROOT -> $CLAUDE_PROJECT_DIR -> $PWD
+#   --no-merge reports state and exits 1 when behind, mutating nothing
+#
+# Run:  bash tests/test-check-freshness.sh   (from anywhere)
+# No network: `origin` is a local bare repo in a temp dir. No real vault is
+# touched. Every case gets its own fresh mktemp -d sandbox.
+set -uo pipefail
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
+FRESH="$REPO_ROOT/brain/bin/check-freshness.sh"
+
+PASSED=0
+FAILED=0
+
+TMPROOT="$(mktemp -d)"
+cleanup() { rm -rf "$TMPROOT" 2>/dev/null || true; }
+trap cleanup EXIT
+
+# ---------------------------------------------------------------- helpers ---
+
+pass() { PASSED=$((PASSED + 1)); echo "PASS $1"; }
+
+fail() {
+  FAILED=$((FAILED + 1))
+  echo "FAIL $1"
+  shift
+  local line
+  for line in "$@"; do
+    echo "     $line"
+  done
+}
+
+assert_eq() { # name expected actual [evidence...]
+  local name="$1" exp="$2" act="$3"
+  shift 3
+  if [[ "$exp" == "$act" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected: [$exp]" "actual:   [$act]" "$@"
+  fi
+}
+
+assert_ne() { # name not_expected actual [evidence...]
+  local name="$1" nexp="$2" act="$3"
+  shift 3
+  if [[ "$nexp" != "$act" ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected value to CHANGE from: [$nexp]" "actual:   [$act]" "$@"
+  fi
+}
+
+assert_prefix() { # name prefix actual [evidence...]
+  local name="$1" pre="$2" act="$3"
+  shift 3
+  if [[ "$act" == "$pre"* ]]; then
+    pass "$name"
+  else
+    fail "$name" "expected line starting with: [$pre]" "actual line:                [$act]" "$@"
+  fi
+}
+
+assert_true() { # name condition_result(0/1) [evidence...]
+  local name="$1" rc="$2"
+  shift 2
+  if [[ "$rc" -eq 0 ]]; then
+    pass "$name"
+  else
+    fail "$name" "$@"
+  fi
+}
+
+# First line of a file, with any trailing CR stripped (Git Bash / CRLF safety).
+first_line() { head -n 1 "$1" 2>/dev/null | tr -d '\r'; }
+
+evidence() { # box -> a few lines of captured output for failure messages
+  local box="$1"
+  echo "stdout: [$(tr '\n' '|' <"$box/out.txt" 2>/dev/null)]"
+  echo "stderr: [$(tr '\n' '|' <"$box/err.txt" 2>/dev/null)]"
+}
+
+# --------------------------------------------------------- git sandboxing ---
+
+# Applied at init/clone time so line endings are LF regardless of the machine's
+# global core.autocrlf.
+GITOPTS=(-c core.autocrlf=false -c core.eol=lf)
+
+# Identity + settings so commits work on a machine with no global git identity,
+# and so nothing prompts, signs, or reaches out.
+gitcfg() { # repo
+  git -C "$1" config user.email "freshness-test@example.invalid"
+  git -C "$1" config user.name "Freshness Test"
+  git -C "$1" config commit.gpgsign false
+  git -C "$1" config tag.gpgsign false
+  git -C "$1" config core.autocrlf false
+  git -C "$1" config advice.detachedHead false
+}
+
+# Builds a fresh isolated sandbox and assigns the globals BOX / ORIGIN / SEED /
+# VAULT. Deliberately NOT run inside a command substitution: a previous harness
+# in this repo did that, the assignments were lost, and state leaked between
+# cases. Call it as a plain statement.
+BOX=""
+ORIGIN=""
+SEED=""
+VAULT=""
+sb_new() {
+  BOX="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+  ORIGIN="$BOX/origin.git"
+  SEED="$BOX/seed"
+  VAULT="$BOX/vault"
+
+  git init --quiet --bare -b main "$ORIGIN"
+
+  # core.autocrlf must be off for the checkout itself, not just afterwards:
+  # a machine with the global autocrlf=true would otherwise write CRLF working
+  # files against an LF index and every sandbox would start out "dirty".
+  git "${GITOPTS[@]}" init --quiet -b main "$SEED"
+  gitcfg "$SEED"
+  mkdir -p "$SEED/wiki"
+  printf 'hot cache\n' >"$SEED/wiki/hot.md"
+  printf 'shared line 0\n' >"$SEED/shared.txt"
+  git -C "$SEED" add -A
+  git -C "$SEED" commit --quiet -m "seed"
+  git -C "$SEED" remote add origin "$ORIGIN"
+  git -C "$SEED" push --quiet -u origin main
+
+  # The vault under test: a clone, so `origin` is wired up and wiki/ exists
+  # (satisfies the vault sanity check that sync-graph.sh also uses).
+  git "${GITOPTS[@]}" clone --quiet "$ORIGIN" "$VAULT"
+  gitcfg "$VAULT"
+}
+
+# Adds one commit to origin/main via the seed clone (simulates a teammate).
+seed_push() { # msg relpath content
+  local msg="$1" rel="$2" content="$3"
+  mkdir -p "$(dirname "$SEED/$rel")"
+  printf '%s' "$content" >"$SEED/$rel"
+  git -C "$SEED" add -A
+  git -C "$SEED" commit --quiet -m "$msg"
+  git -C "$SEED" push --quiet origin main
+}
+
+# Adds one commit on the vault's own branch (simulates the local user).
+vault_commit() { # msg relpath content
+  local msg="$1" rel="$2" content="$3"
+  mkdir -p "$(dirname "$VAULT/$rel")"
+  printf '%s' "$content" >"$VAULT/$rel"
+  git -C "$VAULT" add -A
+  git -C "$VAULT" commit --quiet -m "$msg"
+}
+
+origin_sha() { git --git-dir="$ORIGIN" rev-parse refs/heads/main 2>/dev/null; }
+vault_sha() { git -C "$VAULT" rev-parse HEAD 2>/dev/null; }
+
+STATUS=""
+# Runs the script under test against $1 (vault dir), capturing streams into
+# $BOX/out.txt and $BOX/err.txt and the exit code into $STATUS.
+run_fresh() { # vault [args...]
+  local vault="$1"
+  shift
+  (
+    cd "$vault" 2>/dev/null || exit 127
+    unset CLAUDE_PROJECT_DIR
+    BRAIN_ROOT="$vault" bash "$FRESH" "$@"
+  ) >"$BOX/out.txt" 2>"$BOX/err.txt"
+  STATUS=$?
+}
+
+if [[ ! -f "$FRESH" ]]; then
+  echo "note: $FRESH does not exist yet — every case below is expected to FAIL until it lands."
+fi
+
+# ================================================================== CASES ===
+
+# --- 1. up-to-date branch => exit 0, OK, HEAD unchanged -------------------
+echo "--- 1. up-to-date ---"
+sb_new
+before="$(vault_sha)"
+run_fresh "$VAULT"
+assert_eq "up-to-date/exit-0" "0" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "up-to-date/stdout-first-line-OK" "FRESHNESS: OK" "$(first_line "$BOX/out.txt")" \
+  "$(evidence "$BOX")"
+assert_eq "up-to-date/head-unchanged" "$before" "$(vault_sha)" "$(evidence "$BOX")"
+
+# --- 2. THE COMMON CASE: 3 behind, 0 own => fast-forwarded ----------------
+echo "--- 2. behind (fast-forward) ---"
+sb_new
+before="$(vault_sha)"
+seed_push "teammate 1" "wiki/hot.md" "hot cache v1"
+seed_push "teammate 2" "wiki/notes.md" "notes"
+seed_push "teammate 3" "wiki/hot.md" "hot cache v3"
+want="$(origin_sha)"
+run_fresh "$VAULT"
+after="$(vault_sha)"
+assert_eq "behind/exit-0" "0" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "behind/stdout-first-line-OK" "FRESHNESS: OK" "$(first_line "$BOX/out.txt")" \
+  "$(evidence "$BOX")"
+assert_ne "behind/head-actually-moved" "$before" "$after" "$(evidence "$BOX")"
+assert_eq "behind/head-equals-origin-main-sha" "$want" "$after" \
+  "the branch must actually fast-forward, not merely report being behind" \
+  "$(evidence "$BOX")"
+if cat "$BOX/out.txt" "$BOX/err.txt" 2>/dev/null | grep -qiE 'fast[-_ ]?forward'; then
+  pass "behind/output-mentions-fast-forward"
+else
+  fail "behind/output-mentions-fast-forward" \
+    "expected output to mention 'fast-forward'" "$(evidence "$BOX")"
+fi
+
+# --- 3. behind + --no-merge => exit 1, nothing mutated --------------------
+echo "--- 3. behind + --no-merge ---"
+sb_new
+before="$(vault_sha)"
+seed_push "teammate 1" "wiki/hot.md" "hot cache v1"
+seed_push "teammate 2" "wiki/notes.md" "notes"
+seed_push "teammate 3" "wiki/hot.md" "hot cache v3"
+origin_before="$(origin_sha)"
+run_fresh "$VAULT" --no-merge
+assert_eq "no-merge/exit-1" "1" "$STATUS" "$(evidence "$BOX")"
+assert_eq "no-merge/head-unchanged" "$before" "$(vault_sha)" \
+  "--no-merge must mutate nothing" "$(evidence "$BOX")"
+assert_eq "no-merge/origin-ref-unchanged" "$origin_before" "$(origin_sha)" "$(evidence "$BOX")"
+
+# --- 4. diverged, clean merge => exit 0, real merge commit ----------------
+echo "--- 4. diverged, clean merge ---"
+sb_new
+seed_push "teammate touches fileB" "fileB.txt" "B content"
+vault_commit "local touches fileA" "fileA.txt" "A content"
+own_sha="$(vault_sha)"
+run_fresh "$VAULT"
+assert_eq "diverged-clean/exit-0" "0" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "diverged-clean/stdout-first-line-OK" "FRESHNESS: OK" "$(first_line "$BOX/out.txt")" \
+  "$(evidence "$BOX")"
+parents="$(git -C "$VAULT" rev-list --parents -n 1 HEAD 2>/dev/null | wc -w | tr -d ' ')"
+assert_eq "diverged-clean/head-is-a-merge-commit-2-parents" "3" "$parents" \
+  "(rev-list --parents -n1 HEAD prints <commit> <parent1> <parent2> = 3 tokens)" \
+  "head: $(vault_sha)  own commit was: $own_sha" \
+  "$(evidence "$BOX")"
+tree="$(git -C "$VAULT" ls-tree -r --name-only HEAD 2>/dev/null | tr '\n' ' ')"
+if [[ "$tree" == *"fileA.txt"* && "$tree" == *"fileB.txt"* ]]; then
+  pass "diverged-clean/both-files-present-in-tree"
+else
+  fail "diverged-clean/both-files-present-in-tree" \
+    "expected fileA.txt and fileB.txt in HEAD tree" "actual tree: [$tree]" "$(evidence "$BOX")"
+fi
+
+# --- 5. diverged, conflicting => exit 1, repo left CLEAN ------------------
+echo "--- 5. diverged, conflicting ---"
+sb_new
+origin_before=""
+seed_push "teammate rewrites shared line" "shared.txt" "shared line THEIRS"
+origin_before="$(origin_sha)"
+vault_commit "local rewrites shared line" "shared.txt" "shared line MINE"
+own_sha="$(vault_sha)"
+run_fresh "$VAULT"
+assert_eq "conflict/exit-1" "1" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "conflict/stderr-first-line-BLOCKED" "FRESHNESS: BLOCKED" "$(first_line "$BOX/err.txt")" \
+  "$(evidence "$BOX")"
+if [[ -e "$VAULT/.git/MERGE_HEAD" ]]; then
+  fail "conflict/no-merge-in-progress" \
+    "$VAULT/.git/MERGE_HEAD exists — the script left a merge in progress" \
+    "MERGE_HEAD: [$(cat "$VAULT/.git/MERGE_HEAD" 2>/dev/null)]" "$(evidence "$BOX")"
+else
+  pass "conflict/no-merge-in-progress"
+fi
+unmerged="$(git -C "$VAULT" status --porcelain 2>/dev/null | grep -E '^(U.|.U|AA|DD|AU|UA|DU|UD)' | tr '\n' '|')"
+assert_eq "conflict/no-unmerged-entries-in-status" "" "$unmerged" \
+  "git status --porcelain: [$(git -C "$VAULT" status --porcelain 2>/dev/null | tr '\n' '|')]" \
+  "$(evidence "$BOX")"
+assert_eq "conflict/own-commit-still-head" "$own_sha" "$(vault_sha)" "$(evidence "$BOX")"
+if git -C "$VAULT" log --format=%s 2>/dev/null | grep -qx "local rewrites shared line"; then
+  pass "conflict/own-commit-intact-in-history"
+else
+  fail "conflict/own-commit-intact-in-history" \
+    "expected commit subject 'local rewrites shared line' in log" \
+    "log: [$(git -C "$VAULT" log --format=%s 2>/dev/null | tr '\n' '|')]" "$(evidence "$BOX")"
+fi
+assert_eq "conflict/origin-ref-unchanged-no-push" "$origin_before" "$(origin_sha)" \
+  "a BLOCKED run must never commit to or push to origin" "$(evidence "$BOX")"
+
+# --- 6. no origin remote at all => exit 0, skipped ------------------------
+echo "--- 6. no origin remote ---"
+sb_new
+git -C "$VAULT" remote remove origin
+before="$(vault_sha)"
+run_fresh "$VAULT"
+assert_eq "no-remote/exit-0" "0" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "no-remote/stdout-first-line-OK" "FRESHNESS: OK" "$(first_line "$BOX/out.txt")" \
+  "$(evidence "$BOX")"
+if grep -qi 'skip' "$BOX/out.txt"; then
+  pass "no-remote/says-check-skipped"
+else
+  fail "no-remote/says-check-skipped" "expected stdout to say the check was skipped" \
+    "$(evidence "$BOX")"
+fi
+assert_eq "no-remote/head-unchanged" "$before" "$(vault_sha)" "$(evidence "$BOX")"
+
+# --- 7. origin configured but unreachable => exit 0, skipped --------------
+echo "--- 7. origin unreachable ---"
+sb_new
+git -C "$VAULT" remote set-url origin "$BOX/no-such-repo-here.git"
+before="$(vault_sha)"
+run_fresh "$VAULT"
+assert_eq "unreachable/exit-0-does-not-block-save" "0" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "unreachable/stdout-first-line-OK" "FRESHNESS: OK" "$(first_line "$BOX/out.txt")" \
+  "$(evidence "$BOX")"
+if grep -qi 'skip' "$BOX/out.txt"; then
+  pass "unreachable/says-check-skipped"
+else
+  fail "unreachable/says-check-skipped" "expected stdout to say the check was skipped" \
+    "$(evidence "$BOX")"
+fi
+assert_eq "unreachable/head-unchanged" "$before" "$(vault_sha)" "$(evidence "$BOX")"
+
+# --- 8. not a git repo at all => exit 0 ----------------------------------
+echo "--- 8. not a git repo ---"
+sb_new
+NOGIT="$BOX/plainvault"
+mkdir -p "$NOGIT/wiki"
+printf 'hot cache\n' >"$NOGIT/wiki/hot.md"
+run_fresh "$NOGIT"
+assert_eq "not-a-repo/exit-0" "0" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "not-a-repo/stdout-first-line-OK" "FRESHNESS: OK" "$(first_line "$BOX/out.txt")" \
+  "$(evidence "$BOX")"
+if [[ -e "$NOGIT/.git" ]]; then
+  fail "not-a-repo/did-not-init-a-repo" "the script created $NOGIT/.git" "$(evidence "$BOX")"
+else
+  pass "not-a-repo/did-not-init-a-repo"
+fi
+
+# --- 9. behind + dirty tree that the ff would overwrite => BLOCKED --------
+echo "--- 9. behind + dirty working tree ---"
+sb_new
+seed_push "teammate edits shared.txt" "shared.txt" "shared line THEIRS"
+origin_before="$(origin_sha)"
+before="$(vault_sha)"
+DIRTY_CONTENT='uncommitted work that must survive
+line two
+'
+printf '%s' "$DIRTY_CONTENT" >"$VAULT/shared.txt"
+printf '%s' "$DIRTY_CONTENT" >"$BOX/dirty.expected"
+run_fresh "$VAULT"
+assert_eq "dirty/exit-1" "1" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "dirty/stderr-first-line-BLOCKED" "FRESHNESS: BLOCKED" "$(first_line "$BOX/err.txt")" \
+  "$(evidence "$BOX")"
+if cmp -s "$BOX/dirty.expected" "$VAULT/shared.txt"; then
+  pass "dirty/uncommitted-content-intact-byte-for-byte"
+else
+  fail "dirty/uncommitted-content-intact-byte-for-byte" \
+    "the script discarded or altered uncommitted work in $VAULT/shared.txt" \
+    "expected (od -c): $(od -c "$BOX/dirty.expected" | head -n 3 | tr '\n' ' ')" \
+    "actual   (od -c): $(od -c "$VAULT/shared.txt" 2>/dev/null | head -n 3 | tr '\n' ' ')" \
+    "$(evidence "$BOX")"
+fi
+assert_eq "dirty/head-unchanged" "$before" "$(vault_sha)" "$(evidence "$BOX")"
+if [[ -e "$VAULT/.git/MERGE_HEAD" ]]; then
+  fail "dirty/no-merge-in-progress" "$VAULT/.git/MERGE_HEAD exists" "$(evidence "$BOX")"
+else
+  pass "dirty/no-merge-in-progress"
+fi
+assert_eq "dirty/origin-ref-unchanged-no-push" "$origin_before" "$(origin_sha)" \
+  "a BLOCKED run must never commit to or push to origin" "$(evidence "$BOX")"
+
+# --- 10. no BLOCKED path ever writes to origin (aggregate re-check) -------
+# Cases 3, 5 and 9 each assert origin's ref sha above; this case re-runs the
+# three blocking scenarios in one fresh sandbox each and checks that origin has
+# gained no new commits at all (ref sha AND commit count).
+echo "--- 10. BLOCKED runs never touch origin ---"
+origin_count() { git --git-dir="$ORIGIN" rev-list --count refs/heads/main 2>/dev/null; }
+
+for scenario in no-merge conflict dirty; do
+  sb_new
+  case "$scenario" in
+    no-merge)
+      seed_push "teammate" "wiki/notes.md" "notes"
+      args=(--no-merge)
+      ;;
+    conflict)
+      seed_push "teammate rewrites shared line" "shared.txt" "shared line THEIRS"
+      vault_commit "local rewrites shared line" "shared.txt" "shared line MINE"
+      args=()
+      ;;
+    dirty)
+      seed_push "teammate edits shared.txt" "shared.txt" "shared line THEIRS"
+      printf 'uncommitted\n' >"$VAULT/shared.txt"
+      args=()
+      ;;
+  esac
+  o_sha_before="$(origin_sha)"
+  o_count_before="$(origin_count)"
+  run_fresh "$VAULT" ${args[@]+"${args[@]}"}
+  assert_eq "no-push/$scenario/exit-1" "1" "$STATUS" "$(evidence "$BOX")"
+  assert_eq "no-push/$scenario/origin-sha-unchanged" "$o_sha_before" "$(origin_sha)" \
+    "$(evidence "$BOX")"
+  assert_eq "no-push/$scenario/origin-commit-count-unchanged" "$o_count_before" "$(origin_count)" \
+    "$(evidence "$BOX")"
+done
+
+# ================================================================= SUMMARY ==
+echo
+echo "$PASSED passed, $FAILED failed"
+[[ $FAILED -eq 0 ]] || exit 1
+exit 0

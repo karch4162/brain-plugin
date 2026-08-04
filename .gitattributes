@@ -1,0 +1,5 @@
+# Shell scripts must be LF in the repo. core.autocrlf=true on a Windows clone
+# otherwise commits them with CRLF, and bash on macOS/Linux fails on the \r —
+# including in the shebang. The plugin ships to non-Windows installs.
+*.sh text eol=lf
+*.mjs text eol=lf
