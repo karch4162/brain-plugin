@@ -11,6 +11,18 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 
 ## What to do when invoked
 
+0. **Check branch freshness before touching `wiki/hot.md`.** Step 3 **rewrites** hot.md, so a stale base silently reverts whatever anyone else landed on it. Measure the gap first:
+   ```bash
+   git fetch --prune                                   # refs only — does not touch the working tree
+   git rev-list --count HEAD..origin/main              # commits this branch is behind
+   git status --porcelain wiki/hot.md                  # uncommitted local edits to hot.md?
+   ```
+   - **Count `0` →** proceed normally.
+   - **Count `> 0` → refuse to rewrite `wiki/hot.md` from this base.** There is no safe merge for a full-file rewrite: **bring the branch up to date first (`git rebase origin/main` or `git merge origin/main`), then re-run `/brain:save`.** Do not "carefully merge by hand" and do not rewrite anyway — say plainly that the branch is `<n>` commits behind and stop at step 3.
+   - **`wiki/hot.md` already has uncommitted changes →** they are about to be overwritten by the rewrite. Show them (`git diff wiki/hot.md`) and ask the user before continuing; if they're this session's own work in progress, continue.
+   - **`origin/main` unreachable** (offline, no remote, fetch fails) → say so in **one line** ("freshness check skipped — origin unreachable") and continue. This is a guard, not a network dependency.
+   - **Only the hot.md rewrite is blocked.** The session log (step 2), the `wiki/log.md` line (step 4), and the graph builds/sync (steps 5–5c) are **append-only or additive** — a stale base cannot revert anything through them. On a stale branch, do every other step, skip step 3, and report it in the output.
+
 1. **Get today's date** (do not guess):
    ```bash
    date +%F
@@ -40,6 +52,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    - Update the `_Last refreshed:_` date.
    - **Rewrite** "Current focus" to only what is actually in flight *now*. **Delete** any bullet describing a prior session or work that's finished — do not add "Prior session:" bullets, ever.
    - **Hard budget: after your edit, the whole file must be ≤ ~500 words.** If it's over, keep cutting — oldest/stalest bullets first — until it isn't. Roughly: if a bullet wouldn't change what the next session does, it goes.
+   - **Measure it — don't eyeball it.** After every edit to the file, run `wc -w wiki/hot.md`; if the count is over 500, cut and re-run until it isn't. The budget is not met until the command says so.
    - Why this is enforced: `/brain:resume` reads this file first every session, and step 5c re-extracts it into the wiki concept graph on every save — a bloated hot.md makes *every* future save slower and noisier. `/brain:freshness` flags the file when it exceeds ~750 words; treat that finding as "this step was skipped."
 
 4. **Append one line to `wiki/log.md`** (append-only operation log), e.g.:
