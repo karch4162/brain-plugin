@@ -11,17 +11,15 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 
 ## What to do when invoked
 
-0. **Check branch freshness before touching `wiki/hot.md`.** Step 3 **rewrites** hot.md, so a stale base silently reverts whatever anyone else landed on it. Measure the gap first:
+0. **Check branch freshness before touching `wiki/hot.md`.** Step 3 **rewrites** hot.md, so a stale base silently reverts whatever anyone else landed on it. Don't reason about this — run the guard, which brings the branch up to date on its own when that's safe:
    ```bash
-   git fetch --prune                                   # refs only — does not touch the working tree
-   git rev-list --count HEAD..origin/main              # commits this branch is behind
-   git status --porcelain wiki/hot.md                  # uncommitted local edits to hot.md?
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/check-freshness.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
    ```
-   - **Count `0` →** proceed normally.
-   - **Count `> 0` → refuse to rewrite `wiki/hot.md` from this base.** There is no safe merge for a full-file rewrite: **bring the branch up to date first (`git rebase origin/main` or `git merge origin/main`), then re-run `/brain:save`.** Do not "carefully merge by hand" and do not rewrite anyway — say plainly that the branch is `<n>` commits behind and stop at step 3.
-   - **`wiki/hot.md` already has uncommitted changes →** they are about to be overwritten by the rewrite. Show them (`git diff wiki/hot.md`) and ask the user before continuing; if they're this session's own work in progress, continue.
-   - **`origin/main` unreachable** (offline, no remote, fetch fails) → say so in **one line** ("freshness check skipped — origin unreachable") and continue. This is a guard, not a network dependency.
-   - **Only the hot.md rewrite is blocked.** The session log (step 2), the `wiki/log.md` line (step 4), and the graph builds/sync (steps 5–5c) are **append-only or additive** — a stale base cannot revert anything through them. On a stale branch, do every other step, skip step 3, and report it in the output.
+   - **Exit `0` (`FRESHNESS: OK`) →** the base is current (fast-forwarded, merged, or already up to date). Do the whole save, step 3 included.
+   - **Exit `1` (`FRESHNESS: BLOCKED`) →** skip **step 3 only**. Relay the script's `FRESHNESS: BLOCKED` line to the user **verbatim** — it names the branch, the counts and the remedy; do not paraphrase or re-derive it — and report the skipped hot.md refresh in the output block.
+   - **Only the hot.md rewrite is gated.** The session log (step 2), the `wiki/log.md` line (step 4) and the graph builds/sync (steps 5–5c) are **append-only or additive** — a stale base cannot revert anything through them, so they **always** run.
+
+   Offline, no origin, or not a git repo exits `0` — this is a guard, not a network dependency. `--no-merge` reports without mutating.
 
 1. **Get today's date** (do not guess):
    ```bash
@@ -49,6 +47,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    Be honest in "Pending" — this is what `/brain:resume` surfaces next time. Don't claim things are done that aren't.
 
 3. **Refresh `wiki/hot.md` — rewrite, never append.** This is a *rolling cache*, not a log; the session history already lives in `logs/` (step 2), so nothing is lost by deleting from here. Concretely:
+   - **First: `git status --porcelain wiki/hot.md`.** Uncommitted edits here are about to be overwritten by the rewrite and are **not recoverable** — step 0's guard only catches the committed kind. If the file is dirty, show `git diff wiki/hot.md` and ask before continuing; if it's this session's own work in progress, continue.
    - Update the `_Last refreshed:_` date.
    - **Rewrite** "Current focus" to only what is actually in flight *now*. **Delete** any bullet describing a prior session or work that's finished — do not add "Prior session:" bullets, ever.
    - **Hard budget: after your edit, the whole file must be ≤ ~500 words.** If it's over, keep cutting — oldest/stalest bullets first — until it isn't. Roughly: if a bullet wouldn't change what the next session does, it goes.
@@ -103,7 +102,8 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 
 ```
 Saved. Log: logs/<date>-<slug>.md
-hot.md refreshed · log.md appended
+Freshness: <up to date | fast-forwarded from origin/main | BLOCKED — <script's reason>>
+hot.md <refreshed | refresh SKIPPED (branch not fresh)> · log.md appended
 Graph sync: <synced repos | not needed this session>
 Committed locally (not pushed). Open loops carried forward: <n>
 ```
