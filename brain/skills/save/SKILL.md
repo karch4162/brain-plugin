@@ -51,7 +51,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    - Update the `_Last refreshed:_` date.
    - **Rewrite** "Current focus" to only what is actually in flight *now*. **Delete** any bullet describing a prior session or work that's finished — do not add "Prior session:" bullets, ever.
    - **Hard budget: after your edit, the whole file must be ≤ ~500 words.** If it's over, keep cutting — oldest/stalest bullets first — until it isn't. Roughly: if a bullet wouldn't change what the next session does, it goes.
-   - **Measure it — don't eyeball it.** After every edit to the file, run `wc -w wiki/hot.md`; if the count is over 500, cut and re-run until it isn't. The budget is not met until the command says so.
+   - **Measure it — don't eyeball it.** After every edit to the file, run `wc -w wiki/hot.md`; if the count is over 500, cut and re-run until it isn't. The budget is not met until the command says so. **Hard stop: do not proceed to step 4 until `wc -w wiki/hot.md` has actually printed a number ≤ 500.**
    - Why this is enforced: `/brain:resume` reads this file first every session, and step 5c re-extracts it into the wiki concept graph on every save — a bloated hot.md makes *every* future save slower and noisier. `/brain:freshness` flags the file when it exceeds ~750 words; treat that finding as "this step was skipped."
 
 4. **Append one line to `wiki/log.md`** (append-only operation log), e.g.:
@@ -78,6 +78,11 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    **First ingest for a repo** (no link-notes / draft notes derived from its docs exist yet — e.g. a freshly onboarded repo): ingest **all** of its docs, not just recently-modified ones. **Thereafter:** only docs changed since the last ingest (track via a small manifest or the notes' `source:` anchors). Docs-ingest is **independent of code changes** — a repo whose source didn't change this session can still have un-ingested docs; don't gate it on "source changed." Skip only if every covered repo's docs are already fully ingested and unchanged.
 
 5c. **Refresh the wiki concept graph if `wiki/` notes changed this session** (including any notes 5b just wrote)**.** The vault's own graph (`graphify-out/graph.json`, built over `wiki/`) goes stale when notes are added/edited. This refresh is **agent-driven**: unlike the code graphs (free, pure-AST, auto-fresh on every commit), prose notes need an LLM extraction pass. Run that pass **through the graphify _skill_ — this host session is the LLM** — never through the bare CLI:
+   - **First, get the real changed-note list:**
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/bin/changed-wiki-notes.sh"   # one vault-relative wiki/**/*.md path per line; silent + exit 0 when nothing changed
+     ```
+     (Run from the vault root, or with `BRAIN_ROOT=<vault>` set. `--since <ref>` also covers notes committed since that ref; `--porcelain` prints a count first.) **This output is the authoritative changed-note list. `manifest.json` over-reports badly — hundreds of notes flagged when ten actually changed — and must never be used to decide what to re-extract**, since 5c dispatches a subagent per changed note. **If the script prints nothing, skip step 5c entirely.**
    - **Invoke the graphify skill on `wiki/`.** From the vault root, run the skill (`Skill` tool, `skill: "graphify"`) scoped to the `wiki/` folder — **incremental** if a wiki graph already exists, **full** on the first build:
      - If `graphify-out/graph.json` exists → argument `wiki --update` (the `--update` flow; only changed notes re-extract via the semantic cache).
      - If it does **not** exist (first-ever wiki build for this vault) → argument `wiki` (a full build; `--update` has no baseline to diff against and would no-op).
@@ -112,4 +117,5 @@ Committed locally (not pushed). Open loops carried forward: <n>
 
 - One log per session; if `/brain:save` runs twice in a day, append to or supersede the existing dated log rather than creating a collision.
 - **`/brain:save` is also the seed mechanism.** `/brain:init` offers to run it for the **first** build (step 5 treats a scope-table repo with no graph yet as a first/full build). So the first invocation may be a seed, not an end-of-session save — the log slug should reflect that ("seed brain for <repo>").
+- **Never hand-resolve merge conflicts under `graphify-out/`.** Two independent rebuilds re-cluster and re-label the same communities, so one cluster shows up as a rename/rename conflict between two unrelated-looking names — the "conflict" is cosmetic. **Take one side wholesale — normally the newer build — and let the next step-5c refresh regenerate.** (Learned resolving 143 of these on one PR.)
 - The mirror of this is [[resume]].

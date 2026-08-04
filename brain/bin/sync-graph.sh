@@ -11,12 +11,29 @@
 # plugin, NOT inside the vault, so it cannot derive the vault from its own location.
 #
 # Usage:
-#   BRAIN_ROOT=<vault> bash sync-graph.sh                  # sync every repo under graphify/
+#   BRAIN_ROOT=<vault> bash sync-graph.sh                  # sync only mirrors that are STALE (see below)
 #   bash sync-graph.sh <repo-path> [...]                   # sync specific repo checkout(s)
 #   bash sync-graph.sh --no-commit [...]                   # copy + log only, no git commit
+#   bash sync-graph.sh --force-commit [...]                # commit even if the vault branch has an open PR
 #
-# With no repo args, each folder name under <vault>/graphify/ is resolved to a
-# checkout at $REPOS_DIR/<name> (default: the vault's parent dir).
+# Flags may appear in any order, anywhere before the repo args. If both
+# --no-commit and --force-commit are given, --no-commit wins.
+#
+# DEFAULT SCOPE (no repo args): each folder name under <vault>/graphify/ is
+# resolved to a checkout at $REPOS_DIR/<name> (default: the vault's parent dir),
+# but only mirrors that are actually STALE are selected — i.e. the repo-side
+# graphify-out/graph.json exists AND differs byte-for-byte from the mirrored
+# copy in the vault. Mirrors nobody rebuilt this session are left alone (an
+# unscoped run once degraded an untouched mirror's labels). The selected list is
+# printed to stderr before any work happens; if nothing is stale the script says
+# so and exits 0. Explicit repo args are NEVER filtered — naming a repo means it.
+#
+# COMMIT GUARD: if the vault's current branch has an open PR (per `gh`), the sync
+# is left staged/uncommitted rather than piling commits onto a branch under
+# review. Pass --force-commit to override. If `gh` is missing, unauthenticated,
+# or errors, the guard is skipped and the commit proceeds as before — a vault
+# with no GitHub remote keeps working.
+#
 # Override per machine: REPOS_DIR=~/code BRAIN_ROOT=<vault> bash sync-graph.sh
 set -euo pipefail
 
@@ -41,10 +58,20 @@ if [[ ! -d "$VAULT/graphify" && ! -d "$VAULT/wiki" ]]; then
 fi
 
 COMMIT=1
-if [[ "${1:-}" == "--no-commit" ]]; then
-  COMMIT=0
-  shift
-fi
+FORCE_COMMIT=0
+# Flags may be given in any order and anywhere before the repo args; the first
+# non-flag argument ends flag parsing (repo paths can legitimately start with
+# anything, and `--` explicitly terminates the flags).
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --no-commit)    COMMIT=0; shift ;;
+    --force-commit) FORCE_COMMIT=1; shift ;;
+    --)             shift; break ;;
+    *)              break ;;
+  esac
+done
+# --no-commit wins over --force-commit if both were passed.
+if [[ $COMMIT -eq 0 ]]; then FORCE_COMMIT=0; fi
 
 # Prints how many NON-generic community headings the report at $1 has — i.e. how
 # many communities someone (LLM or /brain:label) actually named in it. A missing,
@@ -61,12 +88,34 @@ count_named_labels() {
   return 0
 }
 
+# True when the repo-side graph at $1 exists and differs from the mirrored copy
+# at $2 — the same `cmp -s` test the sync loop uses to decide "up-to-date".
+mirror_is_stale() {
+  local src_graph="$1" dst_graph="$2"
+  [[ -f "$src_graph" ]] || return 1
+  [[ -f "$dst_graph" ]] || return 0
+  ! cmp -s "$src_graph" "$dst_graph"
+}
+
 repos=("$@")
 if [[ ${#repos[@]} -eq 0 ]]; then
+  # DEFAULT SCOPE: never "every mirror". Only mirrors whose source graph actually
+  # differs from the mirrored copy — an unscoped run must not touch a repo nobody
+  # rebuilt (that is how tray_pos_flutter got degraded to generic labels).
+  selected=()
   for d in "$VAULT"/graphify/*/; do
     [[ -d "$d" ]] || continue
-    repos+=("$REPOS_DIR/$(basename "$d")")
+    n="$(basename "$d")"
+    if mirror_is_stale "$REPOS_DIR/$n/graphify-out/graph.json" "$VAULT/graphify/$n/graph.json"; then
+      repos+=("$REPOS_DIR/$n")
+      selected+=("$n")
+    fi
   done
+  if [[ ${#selected[@]} -eq 0 ]]; then
+    echo "nothing to sync: no mirror's graph.json differs from its source" >&2
+    exit 0
+  fi
+  echo "selected ${#selected[@]} mirror(s): ${selected[*]}" >&2
 fi
 
 synced=()
@@ -132,8 +181,45 @@ PY
   synced+=("$name")
 done
 
+# Prints the number of the open PR whose head is the vault's CURRENT branch, or
+# nothing at all when there is no such PR *or* when we simply cannot tell (gh
+# missing, unauthenticated, no remote, API error). This is a safety net, not a
+# hard dependency: "unknown" must look exactly like "no PR" so a vault with no
+# GitHub remote keeps committing as it always has.
+open_pr_for_current_branch() {
+  local branch pr
+  command -v gh >/dev/null 2>&1 || return 0
+  branch="$(git -C "$VAULT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [[ -n "$branch" && "$branch" != "HEAD" ]] || return 0
+  # gh has no -C; run it from inside the vault so it resolves that repo's remote.
+  pr="$(cd "$VAULT" 2>/dev/null && gh pr list --state open --head "$branch" \
+        --json number --jq '.[0].number' 2>/dev/null || true)"
+  pr="${pr//[^0-9]/}"
+  [[ -n "$pr" ]] && echo "$pr"
+  return 0
+}
+
 if [[ ${#synced[@]} -gt 0 && $COMMIT -eq 1 ]]; then
   git -C "$VAULT" add graphify wiki/log.md
-  git -C "$VAULT" commit -m "Sync graph mirror(s): ${synced[*]}"
-  echo "Committed. Push when ready: git -C \"$VAULT\" push"
+
+  # COMMIT GUARD: don't pile a large mechanical sync onto a branch that is already
+  # under review (a prior run committed 607 files onto a branch with an open PR).
+  open_pr=""
+  if [[ $FORCE_COMMIT -eq 0 ]]; then
+    open_pr="$(open_pr_for_current_branch)"
+  fi
+
+  if [[ -n "$open_pr" ]]; then
+    cur_branch="$(git -C "$VAULT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+    {
+      echo "NOT COMMITTING: branch '$cur_branch' has open PR #$open_pr."
+      echo "The sync was left STAGED and uncommitted. Staged for commit:"
+      git -C "$VAULT" diff --cached --name-only | sed 's/^/  /'
+      echo "Mirrors synced: ${synced[*]}"
+      echo "Commit deliberately (git -C \"$VAULT\" commit), or re-run with --force-commit."
+    } >&2
+  else
+    git -C "$VAULT" commit -m "Sync graph mirror(s): ${synced[*]}"
+    echo "Committed. Push when ready: git -C \"$VAULT\" push"
+  fi
 fi

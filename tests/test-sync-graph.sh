@@ -268,6 +268,259 @@ else
     "exit: $status" "stderr: [$(cat "$box/err.txt")]"
 fi
 
+# ================================================================= PART C ===
+# Defect 3 — no-args runs must only sync mirrors whose repo-side graph.json
+#            actually DIFFERS from the vault copy, announcing the selection on
+#            stderr as `selected N mirror(s): ...` (or `nothing to sync: ...`).
+#            Explicit repo args bypass the filter entirely.
+# Defect 4 — the auto-commit must be skipped when the vault's current branch
+#            already has an open PR (detected via `gh`); --force-commit
+#            overrides; a missing/erroring `gh` must NOT block the commit;
+#            --no-commit still wins over --force-commit.
+
+echo "--- C. mirror selection + open-PR commit guard ---"
+
+# PATH used by run_sync_ex; reset to "" after any case that overrides it so a
+# per-case `gh` stub can never leak into a later case.
+SYNC_PATH=""
+
+git_init_commit() { # dir message
+  # core.autocrlf=false / core.eol=lf: a global autocrlf=true otherwise makes a
+  # freshly created repo look dirty and the HEAD-sha assertions meaningless.
+  local d="$1" msg="$2"
+  git -c core.autocrlf=false -c core.eol=lf init -q "$d" >/dev/null 2>&1
+  git -C "$d" config core.autocrlf false
+  git -C "$d" config core.eol lf
+  git -C "$d" config user.email "test@example.invalid"
+  git -C "$d" config user.name "Harness"
+  git -C "$d" config commit.gpgsign false
+  git -C "$d" add -A >/dev/null 2>&1
+  git -C "$d" commit -q -m "$msg" >/dev/null 2>&1
+}
+
+# Writes a fake `gh` into dir $1. $2 is the headRefName to report for an open
+# PR; pass the empty string for "no open PRs". Any non-`pr` invocation is a
+# silent success so a `gh --version` probe cannot skew a case.
+make_gh_stub() { # dir head_ref_or_empty
+  local dir="$1" ref="$2" body='[]'
+  [[ -n "$ref" ]] && body="[{\"number\":4242,\"state\":\"OPEN\",\"isDraft\":false,\"headRefName\":\"$ref\",\"title\":\"open pr\",\"url\":\"https://example.invalid/pr/4242\"}]"
+  mkdir -p "$dir"
+  cat >"$dir/gh" <<GHSTUB
+#!/usr/bin/env bash
+# test stub — never touches the network
+for a in "\$@"; do
+  if [[ "\$a" == "pr" ]]; then
+    cat <<'JSON'
+$body
+JSON
+    exit 0
+  fi
+done
+exit 0
+GHSTUB
+  chmod +x "$dir/gh"
+}
+
+# $PATH with every directory that contains a `gh` executable removed.
+path_without_gh() {
+  local out="" d
+  local IFS=:
+  for d in $PATH; do
+    [[ -n "$d" ]] || continue
+    [[ -e "$d/gh" || -e "$d/gh.exe" || -e "$d/gh.cmd" || -e "$d/gh.bat" ]] && continue
+    out="${out:+$out:}$d"
+  done
+  printf '%s' "$out"
+}
+
+# A `gh` that reports no open PRs, used as the default for the PART C cases so
+# no case can reach the real gh (and therefore the network).
+GH_NONE="$TMPROOT/gh-none"
+make_gh_stub "$GH_NONE" ""
+
+# Runs the real script with arbitrary args. stdout -> $1/out.txt,
+# stderr -> $1/err.txt, combined -> $1/all.txt. Echoes the exit status.
+run_sync_ex() { # box [args...]
+  local box="$1"
+  shift
+  (
+    PATH="${SYNC_PATH:-$GH_NONE:$STUBS:$PATH}"
+    BRAIN_ROOT="$box/vault" \
+      REPOS_DIR="$box/repos" \
+      bash "$SYNC" "$@"
+  ) >"$box/out.txt" 2>"$box/err.txt"
+  local st=$?
+  cat "$box/out.txt" "$box/err.txt" >"$box/all.txt" 2>/dev/null
+  echo $st
+}
+
+# Creates a two-mirror sandbox and ASSIGNS the global MBOX (not a command
+# substitution — the git repo setup has to be visible to the caller).
+# alpha and beta both start byte-identical on both sides; a case makes one
+# differ. Vault is a git repo on branch $MBRANCH.
+MBRANCH="brain/sync-harness"
+new_multi_sandbox() {
+  MBOX="$(mktemp -d "$TMPROOT/mboxXXXXXX")"
+  local v="$MBOX/vault" r="$MBOX/repos" name
+  mkdir -p "$v/wiki"
+  : >"$v/wiki/log.md"
+  for name in alpha beta; do
+    mkdir -p "$v/graphify/$name" "$r/$name/graphify-out"
+    printf '{"nodes":["%s"],"links":[]}\n' "$name" >"$r/$name/graphify-out/graph.json"
+    printf '{"repo":"%s"}\n' "$name" >"$r/$name/graphify-out/manifest.json"
+    make_report "$r/$name/graphify-out/GRAPH_REPORT.md" 3 0 "Label $name"
+    cp "$r/$name/graphify-out/graph.json" "$v/graphify/$name/graph.json"
+    cp "$r/$name/graphify-out/manifest.json" "$v/graphify/$name/manifest.json"
+    cp "$r/$name/graphify-out/GRAPH_REPORT.md" "$v/graphify/$name/$name-GRAPH_REPORT.md"
+  done
+  git_init_commit "$v" "initial vault"
+  git -C "$v" checkout -q -b "$MBRANCH" >/dev/null 2>&1
+}
+
+snapshot_beta() { # box -> $box/beta.before.*
+  cp "$1/vault/graphify/beta/graph.json" "$1/beta.before.graph"
+  cp "$1/vault/graphify/beta/manifest.json" "$1/beta.before.manifest"
+  cp "$1/vault/graphify/beta/beta-GRAPH_REPORT.md" "$1/beta.before.report"
+  cp "$1/vault/wiki/log.md" "$1/log.before"
+}
+
+# --- 13. no-args: only the mirror that DIFFERS is synced -------------------
+new_multi_sandbox
+printf '{"nodes":["alpha","alpha2"],"links":[]}\n' >"$MBOX/repos/alpha/graphify-out/graph.json"
+snapshot_beta "$MBOX"
+status="$(run_sync_ex "$MBOX" --no-commit)"
+assert_files_identical "selection/differing-mirror-alpha-synced" \
+  "$MBOX/repos/alpha/graphify-out/graph.json" "$MBOX/vault/graphify/alpha/graph.json"
+assert_files_identical "selection/unchanged-mirror-beta-graph-untouched" \
+  "$MBOX/beta.before.graph" "$MBOX/vault/graphify/beta/graph.json"
+assert_files_identical "selection/unchanged-mirror-beta-report-untouched" \
+  "$MBOX/beta.before.report" "$MBOX/vault/graphify/beta/beta-GRAPH_REPORT.md"
+if grep -qF 'selected 1 mirror(s)' "$MBOX/err.txt" && grep -qF 'alpha' "$MBOX/err.txt"; then
+  pass "selection/stderr-announces-selected-mirror"
+else
+  fail "selection/stderr-announces-selected-mirror" \
+    "expected stderr to contain 'selected 1 mirror(s)' naming alpha" \
+    "exit: $status" \
+    "stderr: [$(cat "$MBOX/err.txt")]" \
+    "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+
+# --- 14. no-args, nothing differs => 'nothing to sync', exit 0, no writes --
+new_multi_sandbox
+snapshot_beta "$MBOX"
+cp "$MBOX/vault/graphify/alpha/graph.json" "$MBOX/alpha.before.graph"
+status="$(run_sync_ex "$MBOX" --no-commit)"
+assert_eq "empty-selection/exit-0" "0" "$status"
+if grep -qF 'nothing to sync' "$MBOX/all.txt"; then
+  pass "empty-selection/says-nothing-to-sync"
+else
+  fail "empty-selection/says-nothing-to-sync" \
+    "expected 'nothing to sync' in the run output" \
+    "exit: $status" \
+    "stderr: [$(cat "$MBOX/err.txt")]" \
+    "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+assert_files_identical "empty-selection/log-not-appended" \
+  "$MBOX/log.before" "$MBOX/vault/wiki/log.md"
+assert_files_identical "empty-selection/alpha-graph-untouched" \
+  "$MBOX/alpha.before.graph" "$MBOX/vault/graphify/alpha/graph.json"
+assert_files_identical "empty-selection/beta-graph-untouched" \
+  "$MBOX/beta.before.graph" "$MBOX/vault/graphify/beta/graph.json"
+
+# --- 15. explicit repo arg bypasses the filter ----------------------------
+# beta does not differ; an explicit arg must still be PROCESSED, not filtered
+# out. The script may legitimately report it 'up-to-date' — the assertion is
+# only that the new no-args filter did not silently drop it.
+new_multi_sandbox
+status="$(run_sync_ex "$MBOX" --no-commit "$MBOX/repos/beta")"
+if grep -qF 'beta' "$MBOX/all.txt" && ! grep -qF 'nothing to sync' "$MBOX/all.txt"; then
+  pass "explicit-arg/bypasses-difference-filter"
+else
+  fail "explicit-arg/bypasses-difference-filter" \
+    "explicit repo arg for a non-differing mirror was dropped by the no-args filter" \
+    "expected beta to appear in the run output and NOT 'nothing to sync'" \
+    "exit: $status" \
+    "stdout: [$(cat "$MBOX/out.txt")]" \
+    "stderr: [$(cat "$MBOX/err.txt")]"
+fi
+assert_eq "explicit-arg/exit-0" "0" "$status"
+
+# --- 16. open PR on the current branch => auto-commit skipped -------------
+new_multi_sandbox
+printf '{"nodes":["alpha","alpha2"],"links":[]}\n' >"$MBOX/repos/alpha/graphify-out/graph.json"
+GH_OPEN="$MBOX/gh-open"
+make_gh_stub "$GH_OPEN" "$MBRANCH"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+SYNC_PATH="$GH_OPEN:$STUBS:$PATH"
+status="$(run_sync_ex "$MBOX")"
+SYNC_PATH=""
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+assert_eq "pr-guard/no-commit-when-branch-has-open-pr" "$head_before" "$head_after"
+if grep -qF '4242' "$MBOX/err.txt"; then
+  pass "pr-guard/stderr-mentions-pr-number"
+else
+  fail "pr-guard/stderr-mentions-pr-number" \
+    "expected stderr to name the open PR (#4242)" \
+    "exit: $status" \
+    "stderr: [$(cat "$MBOX/err.txt")]" \
+    "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+
+# --- 17. --force-commit overrides the open-PR guard -----------------------
+new_multi_sandbox
+printf '{"nodes":["alpha","alpha2"],"links":[]}\n' >"$MBOX/repos/alpha/graphify-out/graph.json"
+GH_OPEN="$MBOX/gh-open"
+make_gh_stub "$GH_OPEN" "$MBRANCH"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+SYNC_PATH="$GH_OPEN:$STUBS:$PATH"
+status="$(run_sync_ex "$MBOX" --force-commit)"
+SYNC_PATH=""
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+if [[ "$head_before" != "$head_after" ]]; then
+  pass "pr-guard/force-commit-overrides"
+else
+  fail "pr-guard/force-commit-overrides" \
+    "expected a new commit with --force-commit; HEAD did not move" \
+    "head: $head_before" \
+    "exit: $status" \
+    "stderr: [$(cat "$MBOX/err.txt")]" \
+    "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+
+# --- 18. gh missing from PATH => commit still happens ---------------------
+new_multi_sandbox
+printf '{"nodes":["alpha","alpha2"],"links":[]}\n' >"$MBOX/repos/alpha/graphify-out/graph.json"
+NOGH="$(path_without_gh)"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+SYNC_PATH="$STUBS:$NOGH"
+if PATH="$SYNC_PATH" command -v gh >/dev/null 2>&1; then
+  SYNC_PATH=""
+  fail "pr-guard/missing-gh-still-commits" \
+    "could not build a gh-free PATH for this case (gh is still resolvable)"
+else
+  status="$(run_sync_ex "$MBOX")"
+  SYNC_PATH=""
+  head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+  if [[ "$head_before" != "$head_after" ]]; then
+    pass "pr-guard/missing-gh-still-commits"
+  else
+    fail "pr-guard/missing-gh-still-commits" \
+      "gh is only a safety net: with no gh on PATH the commit must still be made" \
+      "head: $head_before" \
+      "exit: $status" \
+      "stderr: [$(cat "$MBOX/err.txt")]" \
+      "stdout: [$(cat "$MBOX/out.txt")]"
+  fi
+fi
+
+# --- 19. --no-commit wins over --force-commit -----------------------------
+new_multi_sandbox
+printf '{"nodes":["alpha","alpha2"],"links":[]}\n' >"$MBOX/repos/alpha/graphify-out/graph.json"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+status="$(run_sync_ex "$MBOX" --no-commit --force-commit)"
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+assert_eq "flags/no-commit-beats-force-commit" "$head_before" "$head_after"
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"
