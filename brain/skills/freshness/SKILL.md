@@ -54,3 +54,4 @@ Validate a scheduled run actually executed (not just "Ready"/exit 0): confirm a 
 - Tune `--stale-days` down as the wiki ages; 45 is deliberately loose so a young vault isn't all-stale.
 - To apply the mechanical subset of the queue (source re-anchors, orphan indexing, tag folds) as one reviewed batch, follow up with `/brain:tidy`.
 - To clear the community-labeling findings (never-labeled / all-generic mirrors), follow up with `/brain:label [repo ...]`.
+- **The anchor verdict is shared, not duplicated.** `verified` / `broken` / `unverifiable` come from `brain/bin/anchors.mjs`, which `/brain:promote`'s gate (`bin/check-anchors.mjs`) also imports — so "does this anchor resolve?" cannot get two different answers depending on which command asked. To check anchors *before* a note becomes trusted rather than weeks later in a report, that is the gate to run.

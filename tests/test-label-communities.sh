@@ -460,6 +460,92 @@ status="$(run_stubs "$box")"
 generic_stubs="$(find "$box/vault/graphify/demo/communities" -maxdepth 1 -name '_COMMUNITY_Community *.md' 2>/dev/null | wc -l | tr -d ' ')"
 assert_eq "generated-report/no-generic-stubs" "0" "$generic_stubs"
 
+# ================================================================= PART F ===
+# INNOV-274 — "what counts as a named label" and "when may an incoming report
+# replace an existing one" are ONE module (brain/bin/label-guard.mjs), used by
+# both /brain:label (here) and /brain:save (sync-graph.sh). These assertions pin
+# the agreement between the two callers, and the one place they deliberately
+# differ.
+
+echo "--- F. shared label-guard module agreement (INNOV-274) ---"
+
+GUARD="$REPO_ROOT/brain/bin/label-guard.mjs"
+
+guard_count() { # report_file -> integer
+  node "$(to_native "$GUARD")" --count "$(to_native "$1")" 2>/dev/null
+}
+
+# Number of ids --digest reports as preserved.
+digest_preserved_count() { # box -> integer
+  jexpr "$1/digest.json" 'Object.keys(d[0].preserved).length'
+}
+
+# --- F1. both callers agree: 1 human label among generic headings -----------
+box="$(new_box)"
+status="$(run_label "$box" --digest demo)"
+cp "$box/out.txt" "$box/digest.json"
+assert_eq "shared/module-counts-the-single-human-label" "1" "$(guard_count "$box/$REPORT_REL")"
+assert_eq "shared/digest-preserves-exactly-what-module-counts" \
+  "$(guard_count "$box/$REPORT_REL")" "$(digest_preserved_count "$box")" \
+  "digest: [$(head -c 400 "$box/digest.json")]"
+
+# --- F2. same fixture, one MORE non-generic label => both counts move together
+box="$(new_box)"
+write_mirror "$box" "Hand Written Name"
+status="$(run_label "$box" --digest demo)"
+cp "$box/out.txt" "$box/digest.json"
+assert_eq "shared/module-counts-two-named-labels" "2" "$(guard_count "$box/$REPORT_REL")"
+assert_eq "shared/callers-agree-with-a-second-named-label" \
+  "$(guard_count "$box/$REPORT_REL")" "$(digest_preserved_count "$box")"
+# ...and that provenance-absent label is preserved through an --apply that tries
+# to rename it (the INNOV-263 backward-compatible reading, re-asserted here
+# because the shared module now owns the "is it a name at all?" half of it).
+status="$(run_apply "$box" '{"0":"Should Not Win","1":"Auth Middleware"}')"
+assert_grep "shared/provenance-absent-label-still-preserved" \
+  '### Community 0 - "Hand Written Name"' "$box/$REPORT_REL"
+
+# --- F3. the deliberate asymmetry ------------------------------------------
+# A derived filler name IS a named label to the module (so /brain:save's copy
+# guard protects it from a generic rebuild), yet /brain:label may still re-name
+# it, because provenance says this script invented it. Both facts at once.
+box="$(new_box)"
+status="$(run_apply "$box" '{"0":"Checkout Flow"}')"
+assert_eq "shared/run1-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+# 6 communities, all named after run 1 (agent + preserved + derived filler).
+assert_eq "shared/derived-filler-counts-as-named-to-the-guard" "6" \
+  "$(guard_count "$box/$REPORT_REL")" \
+  "report: [$(cat "$box/$REPORT_REL")]"
+status="$(run_label "$box" --digest demo)"
+cp "$box/out.txt" "$box/digest.json"
+assert_eq "shared/derived-filler-is-still-renamable-by-label" "true" \
+  "$(jexpr "$box/digest.json" "Object.prototype.hasOwnProperty.call(d[0].labels_template,'1')")" \
+  "digest: [$(head -c 600 "$box/digest.json")]"
+assert_eq "shared/derived-filler-not-in-preserved" "false" \
+  "$(jexpr "$box/digest.json" "Object.prototype.hasOwnProperty.call(d[0].preserved,'1')")"
+
+# --- F4. write-time invariant: --apply never REDUCES the named count --------
+# The same rule sync-graph.sh applies at copy time, applied here at write time.
+box="$(new_box)"
+before_named="$(guard_count "$box/$REPORT_REL")"
+status="$(run_apply "$box" '{"0":"Checkout Flow","1":"Auth Middleware"}')"
+assert_eq "shared/apply-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+after_named="$(guard_count "$box/$REPORT_REL")"
+if [[ "$after_named" -ge "$before_named" ]]; then
+  pass "shared/apply-never-reduces-named-count"
+else
+  fail "shared/apply-never-reduces-named-count" \
+    "named labels went DOWN across --apply: before [$before_named] after [$after_named]" \
+    "report: [$(cat "$box/$REPORT_REL")]"
+fi
+# A fully-named mirror must survive: rerunning --apply with no usable labels
+# still leaves every existing name in place (this is the /brain:label-side twin
+# of integration/regression-440-named-not-clobbered-by-30-named).
+fully_named="$(guard_count "$box/$REPORT_REL")"
+status="$(run_apply "$box" '{"0":"Checkout Flow"}')"
+assert_eq "shared/fully-named-mirror-survives-a-thin-labels-file" \
+  "$fully_named" "$(guard_count "$box/$REPORT_REL")" \
+  "exit: $status" "stderr: [$(cat "$box/err.txt")]"
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"

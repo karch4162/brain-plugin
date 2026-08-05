@@ -68,6 +68,10 @@
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { foldLabel, nameKey } from './community-name.mjs';
+// INNOV-274: "what counts as a named label" is NOT defined here any more — it is
+// defined once in label-guard.mjs and shared with sync-graph.sh's copy-time
+// guard, which used to carry its own grep-shaped copy of the same idea.
+import { isNamedLabel, readReportLabels, countNamedLabels } from './label-guard.mjs';
 
 const argv = process.argv.slice(2);
 const argVal = (flag) => (argv.indexOf(flag) >= 0 ? argv[argv.indexOf(flag) + 1] : undefined);
@@ -75,8 +79,6 @@ const VAULT = process.env.BRAIN_ROOT || process.env.CLAUDE_PROJECT_DIR || proces
 
 const TOP_K = Number(argVal('--top')) || 100;
 const BATCH = 100; // graphify _LABEL_BATCH_SIZE — sized for one naming pass per response
-const GENERIC = /^Community \d+$/;
-const HEADING = /^### Community (\d+) - "(.+?)"/gm; // same regex as build-community-notes + freshness
 const PROV_FILE = '.community-labels.json'; // provenance sidecar, next to the report
 
 // A labels-file key: the raw id ("11"), or its digest display form
@@ -137,9 +139,9 @@ function readMirror(repo) {
   }
   const reportPath = join(dir, `${repo}-GRAPH_REPORT.md`);
   const report = existsSync(reportPath) ? readFileSync(reportPath, 'utf8') : null;
-  const reportLabels = new Map(); // id (number) → label as written
-  if (report !== null)
-    for (const m of report.matchAll(HEADING)) reportLabels.set(Number(m[1]), m[2]);
+  // id (number) → label as written. Parsed by the shared module so this script
+  // and sync-graph.sh cannot disagree about which lines are community headings.
+  const reportLabels = report !== null ? readReportLabels(report) : new Map();
   return {
     dir, reportPath, report, reportLabels, members, degree,
     provenance: readProvenance(dir),
@@ -180,7 +182,9 @@ function readProvenance(dir) {
 //                             makes it a human label again, and it is preserved.
 //   - anything else         → PRESERVED.
 function isPreserved(m, id, existing) {
-  if (existing === undefined || GENERIC.test(existing)) return false;
+  // "Is this a name at all?" is the shared question (label-guard.isNamedLabel).
+  // "Is that name off-limits?" is this script's own, provenance-aware answer.
+  if (!isNamedLabel(existing)) return false;
   const rec = m.provenance.get(id);
   if (!rec || rec.provenance !== 'derived') return true;
   return nameKey(rec.name ?? '') !== nameKey(existing);
@@ -306,14 +310,15 @@ function transformReport(m, finalLabels, preservedIds) {
   // placeholder link entry at the name its own heading carries. Runs LAST, and
   // inside transformReport, so no caller can forget it and no post-pass can see
   // a half-rewritten report.
+  // Re-parsed with the SHARED heading regex (label-guard.mjs), not a local copy.
   const headingNow = new Map(); // id (string) → final heading label
-  for (const h of text.matchAll(/^### Community (\d+) - "(.+)"/gm)) headingNow.set(h[1], h[2]);
+  for (const [id, label] of readReportLabels(text)) headingNow.set(String(id), label);
   text = text.replace(/\[\[_COMMUNITY_Community (\d+)(?:\|Community \1)?\]\]/g, (whole, id) => {
     // Fall back to finalLabels for an id the report links but never gave a
     // heading to; leave a link to an id absent from graph.json alone (nothing
     // here knows what it should be called).
     const name = headingNow.get(id) ?? finalLabels[id];
-    return name && !GENERIC.test(name) ? hubLink(name) : whole;
+    return isNamedLabel(name) ? hubLink(name) : whole;
   });
   return text;
 }
@@ -427,7 +432,7 @@ if (argv.includes('--apply')) {
     if (preserved[id] !== undefined) { finalLabels[id] = preserved[id]; origin[id] = 'preserved'; continue; }
     const raw = agent[String(id)];
     const clean = sanitizeLabel(raw);
-    if (clean && !GENERIC.test(clean)) {
+    if (isNamedLabel(clean)) {
       // Case-insensitive: an agent label that only differs in case from one
       // already taken is the same stub filename, so it must be disambiguated.
       const uniqued = uniqueLabel(clean, taken);
@@ -445,6 +450,22 @@ if (argv.includes('--apply')) {
   const today = new Date();
   const date = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
   const text = m.report !== null ? transformReport(m, finalLabels, preservedIds) : generateReport(repo, m, finalLabels, date);
+
+  // INNOV-274 write-time invariant, using the SAME rule sync-graph.sh applies at
+  // copy time (label-guard.mjs): a report we are about to write must never name
+  // FEWER communities than the one it replaces. By construction it cannot —
+  // preserved headings are untouched and every rewritten heading gets a
+  // non-generic name — so a violation here means a bug in this script, and the
+  // fail-closed answer is identical to the sync guard's: write nothing.
+  const existingNamed = m.report !== null ? countNamedLabels(m.report) : 0;
+  const nextNamed = countNamedLabels(text);
+  if (nextNamed < existingNamed) {
+    console.error(
+      `error ${repo}: refusing to write a LESS-labeled report (${nextNamed} named vs ${existingNamed} existing). ` +
+        'Nothing was written; this is a bug in label-communities.mjs, not in your labels file.'
+    );
+    process.exit(3);
+  }
   writeFileSync(m.reportPath, text, 'utf8');
   // Provenance sidecar: which of these names a human/agent chose and which this
   // script invented. Without it, the next classify() cannot tell them apart and

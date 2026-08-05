@@ -17,6 +17,7 @@ hand-assembled set of global hooks + skills + a hand-written query rule (POC §1
 | **Harvest → draft** | `skills/wiki-ingest` + `bin/harvest-chats.mjs` | distill session transcripts into *draft* notes; promotion is a separate PR step. |
 | **Graph sync** | `bin/sync-graph.sh` + `bin/build-community-notes.mjs` | publish per-repo graph mirrors into the vault, namespaced, with community stubs. A label guard keeps a generic/missing incoming report from clobbering a labeled one. |
 | **Community labeling** | `skills/label` + `bin/label-communities.mjs` | `/brain:label` names a mirror's communities **vault-side** from `graph.json` alone — keyless (host-session), no repo checkout, never changes an existing non-generic name. Clears both freshness labeling findings. |
+| **Label preservation rule** | `bin/label-guard.mjs` | the ONE definition of "a named community label" and of "may this incoming report replace that one". Imported by `label-communities.mjs`, shelled out to by `sync-graph.sh`; **fails closed** — if it cannot run, the existing report is kept. |
 | **graph-before-grep** | `hooks/` | self-gating PreToolUse nudge — once per session, staleness-aware (built-from commit vs HEAD; graph-first when fresh, advisory otherwise); fires only where `graphify-out/graph.json` exists. |
 | **Multi-vault registry** | `skills/init` + `templates/brain-registry.example.json` | route a project's mirror+wiki to the right vault (personal vs team). POC §16.2. |
 | **Health/repair** | `skills/doctor` | `/brain:doctor` diagnoses + repairs graphify launcher/version drift, the vault binding, the registry, and stale interpreter caches. |
@@ -99,6 +100,9 @@ You don't "use" the wiki by hand — agents resolve context through the **graph 
   runs this too (and `/brain:doctor` checks it) — without it the CLI works but `/brain:save`
   can't build the keyless wiki concept graph.
 - Node (for the `bin/*.mjs` scripts and the hook), Bash (for `sync-graph.sh`), git.
+  `sync-graph.sh` shells out to Node twice — `label-guard.mjs` before the report copy
+  and `build-community-notes.mjs` after it — so with no Node the graph still mirrors
+  but the vault-side report is deliberately left untouched.
 
 ## Troubleshooting
 

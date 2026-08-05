@@ -4,15 +4,27 @@
 # Covers the label-guard defect: the old has_named_labels() was an existence
 # check, so an incoming report with 30 named / 410 generic community headings
 # was treated as "named" and clobbered a fully-named 440-community mirror.
-# The fix replaces it with a COUNT comparison via count_named_labels().
+# The fix replaces it with a COUNT comparison.
+#
+# INNOV-274: that comparison, and the definition of "a named community label"
+# underneath it, now live in brain/bin/label-guard.mjs, shared with
+# /brain:label's label-communities.mjs. PART A therefore exercises the shared
+# module's counter (same five assertions the extracted bash function used to
+# face), and PART B adds the FAIL-CLOSED cases the bash grep could never have:
+# a guard that cannot run must PRESERVE the existing report, never overwrite it.
 #
 # Run:  bash tests/test-sync-graph.sh   (from anywhere)
-# No network, no real vault, no node/python required (both are stubbed).
+# No network, no real vault. `python` is still stubbed. `node` is NO LONGER fully
+# stubbed: the label guard is real node code under test, so the node stub
+# delegates label-guard.mjs to the real interpreter and keeps stubbing
+# build-community-notes.mjs (which needs a real vault). A real `node` on PATH is
+# therefore required — the same dependency sync-graph.sh itself now has.
 set -uo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 SYNC="$REPO_ROOT/brain/bin/sync-graph.sh"
+GUARD="$REPO_ROOT/brain/bin/label-guard.mjs"
 
 PASSED=0
 FAILED=0
@@ -79,96 +91,199 @@ make_report() { # file named generic [prefix]
 }
 
 # ================================================================= PART A ===
-# Unit tests for count_named_labels() extracted from sync-graph.sh.
+# Unit tests for the SHARED named-label counter (brain/bin/label-guard.mjs),
+# which replaced sync-graph.sh's private count_named_labels(). Same five
+# assertions, now aimed at the one owner of the rule.
 
-echo "--- A. count_named_labels() unit tests ---"
+echo "--- A. label-guard.mjs named-label counter unit tests ---"
 
-UNIT_SRC="$TMPROOT/count_named_labels.sh"
-sed -n '/^count_named_labels[[:space:]]*(/,/^}/p' "$SYNC" >"$UNIT_SRC" 2>/dev/null
+UNIT_NAMES=(
+  "count_named_labels/missing-file"
+  "count_named_labels/empty-file"
+  "count_named_labels/generic-only"
+  "count_named_labels/3-named-5-generic"
+  "count_named_labels/output-is-single-integer-line"
+  "count_named_labels/no-longer-duplicated-in-sync-graph"
+)
 
-if [[ ! -s "$UNIT_SRC" ]] || ! grep -q '^}' "$UNIT_SRC"; then
-  for t in \
-    "count_named_labels/missing-file" \
-    "count_named_labels/empty-file" \
-    "count_named_labels/generic-only" \
-    "count_named_labels/3-named-5-generic" \
-    "count_named_labels/output-is-single-integer-line"; do
-    fail "$t" "could not extract a 'count_named_labels()' function definition from $SYNC" \
-      "the function must be defined at column 0 and closed by a '}' at column 0"
-  done
-else
-  # shellcheck disable=SC1090
-  source "$UNIT_SRC"
+# Node is a native Windows binary under Git Bash: MSYS rewrites path-shaped
+# ARGUMENTS reliably, so pass paths as arguments (never via env).
+to_native() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -m "$1"; else printf '%s' "$1"; fi
+}
 
-  if ! declare -F count_named_labels >/dev/null 2>&1; then
-    for t in \
-      "count_named_labels/missing-file" \
-      "count_named_labels/empty-file" \
-      "count_named_labels/generic-only" \
-      "count_named_labels/3-named-5-generic" \
-      "count_named_labels/output-is-single-integer-line"; do
-      fail "$t" "count_named_labels is not defined after sourcing the extracted body"
-    done
-  else
-    UOUT="$TMPROOT/unit.out"
-    UERR="$TMPROOT/unit.err"
+REAL_NODE="$(command -v node 2>/dev/null || true)"
 
-    # 1. missing file => 0, exit status 0
-    count_named_labels "$TMPROOT/definitely-does-not-exist.md" >"$UOUT" 2>"$UERR"
-    st=$?
-    got="$(cat "$UOUT")"
-    if [[ "$got" == "0" && $st -eq 0 ]]; then
-      pass "count_named_labels/missing-file"
-    else
-      fail "count_named_labels/missing-file" \
-        "expected: stdout [0], exit [0]" \
-        "actual:   stdout [$got], exit [$st]" \
-        "stderr:   [$(cat "$UERR")]"
-    fi
-
-    # 2. empty file => 0
-    : >"$TMPROOT/empty.md"
-    got="$(count_named_labels "$TMPROOT/empty.md" 2>/dev/null)"
-    assert_eq "count_named_labels/empty-file" "0" "$got"
-
-    # 3. generic-only => 0
-    make_report "$TMPROOT/generic.md" 0 6
-    got="$(count_named_labels "$TMPROOT/generic.md" 2>/dev/null)"
-    assert_eq "count_named_labels/generic-only" "0" "$got"
-
-    # 4. 3 named + 5 generic => 3
-    make_report "$TMPROOT/mixed.md" 3 5
-    got="$(count_named_labels "$TMPROOT/mixed.md" 2>/dev/null)"
-    assert_eq "count_named_labels/3-named-5-generic" "3" "$got"
-
-    # 5. output is exactly one integer line, nothing else (incl. stderr)
-    count_named_labels "$TMPROOT/mixed.md" >"$UOUT" 2>"$UERR"
-    printf '3\n' >"$TMPROOT/unit.expected"
-    if cmp -s "$UOUT" "$TMPROOT/unit.expected" && [[ ! -s "$UERR" ]]; then
-      pass "count_named_labels/output-is-single-integer-line"
-    else
-      fail "count_named_labels/output-is-single-integer-line" \
-        "expected stdout bytes: [3\\n], stderr: empty" \
-        "actual stdout (od -c): $(od -c "$UOUT" | head -n 2 | tr '\n' ' ')" \
-        "actual stderr: [$(cat "$UERR")]"
-    fi
-  fi
+if [[ -z "$REAL_NODE" ]]; then
+  fail "harness/node-available" \
+    "node is required: sync-graph.sh's label guard is now brain/bin/label-guard.mjs (INNOV-274)"
+  for t in "${UNIT_NAMES[@]}"; do fail "$t" "no node on PATH"; done
+  echo
+  echo "$PASSED passed, $FAILED failed"
+  exit 1
 fi
+pass "harness/node-available"
+
+# Drives the shared module's counter exactly as a caller would.
+count_named_labels() { # report_file
+  node "$(to_native "$GUARD")" --count "$(to_native "${1:-}")"
+}
+
+UOUT="$TMPROOT/unit.out"
+UERR="$TMPROOT/unit.err"
+
+# 1. missing file => 0, exit status 0  (a report that does not exist names nothing)
+count_named_labels "$TMPROOT/definitely-does-not-exist.md" >"$UOUT" 2>"$UERR"
+st=$?
+got="$(cat "$UOUT")"
+if [[ "$got" == "0" && $st -eq 0 ]]; then
+  pass "count_named_labels/missing-file"
+else
+  fail "count_named_labels/missing-file" \
+    "expected: stdout [0], exit [0]" \
+    "actual:   stdout [$got], exit [$st]" \
+    "stderr:   [$(cat "$UERR")]"
+fi
+
+# 2. empty file => 0
+: >"$TMPROOT/empty.md"
+got="$(count_named_labels "$TMPROOT/empty.md" 2>/dev/null)"
+assert_eq "count_named_labels/empty-file" "0" "$got"
+
+# 3. generic-only => 0
+make_report "$TMPROOT/generic.md" 0 6
+got="$(count_named_labels "$TMPROOT/generic.md" 2>/dev/null)"
+assert_eq "count_named_labels/generic-only" "0" "$got"
+
+# 4. 3 named + 5 generic => 3
+make_report "$TMPROOT/mixed.md" 3 5
+got="$(count_named_labels "$TMPROOT/mixed.md" 2>/dev/null)"
+assert_eq "count_named_labels/3-named-5-generic" "3" "$got"
+
+# 5. output is exactly one integer line, nothing else (incl. stderr)
+count_named_labels "$TMPROOT/mixed.md" >"$UOUT" 2>"$UERR"
+printf '3\n' >"$TMPROOT/unit.expected"
+if cmp -s "$UOUT" "$TMPROOT/unit.expected" && [[ ! -s "$UERR" ]]; then
+  pass "count_named_labels/output-is-single-integer-line"
+else
+  fail "count_named_labels/output-is-single-integer-line" \
+    "expected stdout bytes: [3\\n], stderr: empty" \
+    "actual stdout (od -c): $(od -c "$UOUT" | head -n 2 | tr '\n' ' ')" \
+    "actual stderr: [$(cat "$UERR")]"
+fi
+
+# 6. INNOV-274 anti-regression: the rule must not creep back into bash. A second
+#    implementation is the defect this ticket exists to remove.
+if grep -qE '^\s*count_named_labels\s*\(\)' "$SYNC" \
+  || grep -qF 'Community [0-9]+ - "' "$SYNC"; then
+  fail "count_named_labels/no-longer-duplicated-in-sync-graph" \
+    "sync-graph.sh still carries its own named-label implementation" \
+    "matches: [$(grep -nE 'count_named_labels\s*\(\)|Community \[0-9\]\+ - "' "$SYNC" | head -n 3 | tr '\n' '/')]"
+else
+  pass "count_named_labels/no-longer-duplicated-in-sync-graph"
+fi
+
+# ---- A2. the replacement rule itself, straight from the module -------------
+echo "--- A2. label-guard.mjs --may-replace verdicts ---"
+
+guard_verdict() { # existing incoming -> "<stdout>|<exit>"
+  local out st
+  out="$(node "$(to_native "$GUARD")" --may-replace "$(to_native "$1")" "$(to_native "$2")" 2>/dev/null)"
+  st=$?
+  printf '%s|%s' "$out" "$st"
+}
+
+make_report "$TMPROOT/g440.md" 440 0 "Vault Label"
+make_report "$TMPROOT/g30.md" 30 410 "Rebuild Label"
+make_report "$TMPROOT/g5a.md" 5 0 "Old Name"
+make_report "$TMPROOT/g5b.md" 5 0 "New Name"
+
+assert_eq "guard/fewer-named-incoming-is-refused" "refuse 440 30|10" \
+  "$(guard_verdict "$TMPROOT/g440.md" "$TMPROOT/g30.md")"
+assert_eq "guard/more-named-incoming-is-allowed" "allow 30 440|0" \
+  "$(guard_verdict "$TMPROOT/g30.md" "$TMPROOT/g440.md")"
+assert_eq "guard/equal-count-relabel-is-allowed" "allow 5 5|0" \
+  "$(guard_verdict "$TMPROOT/g5a.md" "$TMPROOT/g5b.md")"
+assert_eq "guard/absent-existing-report-is-allowed" "allow 0 5|0" \
+  "$(guard_verdict "$TMPROOT/nope-not-here.md" "$TMPROOT/g5a.md")"
+# Asking about an incoming report that is not there is a caller bug, and the
+# module errs closed rather than guessing.
+assert_eq "guard/absent-incoming-report-is-an-error" "|1" \
+  "$(guard_verdict "$TMPROOT/g440.md" "$TMPROOT/nope-not-here.md")"
+# A path that exists but is not a regular file cannot be counted, so it must not
+# be silently read as "0 named labels" (the old bash grep's fail-OPEN).
+mkdir -p "$TMPROOT/report-is-a-dir.md"
+assert_eq "guard/unreadable-existing-report-is-an-error" "|1" \
+  "$(guard_verdict "$TMPROOT/report-is-a-dir.md" "$TMPROOT/g5a.md")"
 
 # ================================================================= PART B ===
 # Integration tests: run the real script end-to-end in a sandbox.
 
 echo "--- B. sync-graph.sh integration tests ---"
 
-# Stub node + python so nothing reaches the network or a real interpreter.
-# Both are invoked with `|| warn` / `|| true` by the script, but stubbing keeps
-# output deterministic. A stub can never fail a test.
+# Stub python so nothing reaches a real interpreter; it is invoked with `|| true`
+# by the script and stubbing keeps the log line deterministic.
+#
+# `node` is a DISPATCHER, not a blanket stub (INNOV-274). sync-graph.sh now calls
+# node twice with opposite requirements:
+#   build-community-notes.mjs — needs a real vault, not under test here → stubbed.
+#   label-guard.mjs           — IS the code under test → delegated to real node.
+# A blanket `exit 0` stub would have made every guard call look like a failure
+# and (correctly, per fail-closed) preserved every report, turning the copy
+# assertions below into vacuous passes. The dispatcher keeps them meaningful.
+# write_node_dispatcher <dir> [prelude-script]
+# The optional prelude runs before delegation, for stubs that must also do
+# something (see HEAD_MOVER).
+write_node_dispatcher() {
+  local dir="$1" prelude="${2:-}"
+  mkdir -p "$dir"
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf '# test stub: real node for label-guard.mjs, no-op for everything else\n'
+    printf 'for a in "$@"; do\n'
+    printf '  case "$a" in\n'
+    printf '    *label-guard.mjs) exec %q "$@" ;;\n' "$REAL_NODE"
+    printf '  esac\n'
+    printf 'done\n'
+    [[ -n "$prelude" ]] && printf '%s\n' "$prelude"
+    printf 'exit 0\n'
+  } >"$dir/node"
+  chmod +x "$dir/node"
+}
+
 STUBS="$TMPROOT/stubs"
 mkdir -p "$STUBS"
-for prog in node python python3; do
+for prog in python python3; do
   printf '#!/usr/bin/env bash\nexit 0\n' >"$STUBS/$prog"
   chmod +x "$STUBS/$prog"
 done
+write_node_dispatcher "$STUBS"
+
+# A `node` that is present but always FAILS — stands in for a broken/missing
+# label-guard.mjs, a wrong Node version, anything that makes the guard unrunnable.
+BROKEN_NODE="$TMPROOT/broken-node"
+mkdir -p "$BROKEN_NODE"
+printf '#!/usr/bin/env bash\necho "SyntaxError: nope" >&2\nexit 1\n' >"$BROKEN_NODE/node"
+chmod +x "$BROKEN_NODE/node"
+
+# A `node` that exits 0 but prints something the caller must not mistake for a
+# verdict. "Exited cleanly" is not consent.
+NOISY_NODE="$TMPROOT/noisy-node"
+mkdir -p "$NOISY_NODE"
+printf '#!/usr/bin/env bash\necho "totally fine, carry on"\nexit 0\n' >"$NOISY_NODE/node"
+chmod +x "$NOISY_NODE/node"
+
+# $PATH with every directory that contains a `<prog>` executable removed.
+path_without_prog() { # prog
+  local prog="$1" out="" d
+  local IFS=:
+  for d in $PATH; do
+    [[ -n "$d" ]] || continue
+    [[ -e "$d/$prog" || -e "$d/$prog.exe" || -e "$d/$prog.cmd" || -e "$d/$prog.bat" ]] && continue
+    out="${out:+$out:}$d"
+  done
+  printf '%s' "$out"
+}
 
 # Creates a fresh isolated sandbox and echoes its path. Runs inside a command
 # substitution, so it must not rely on mutating shell state.
@@ -185,10 +300,10 @@ new_sandbox() {
   echo "$box"
 }
 
-run_sync() { # box  -> stdout/stderr captured to $box/out.txt, $box/err.txt
-  local box="$1"
+run_sync() { # box [path_override]  -> stdout/stderr to $box/out.txt, $box/err.txt
+  local box="$1" path_override="${2:-}"
   (
-    PATH="$STUBS:$PATH"
+    PATH="${path_override:-$STUBS:$PATH}"
     BRAIN_ROOT="$box/vault" \
       REPOS_DIR="$box/repos" \
       bash "$SYNC" --no-commit "$box/repos/demorepo"
@@ -268,6 +383,52 @@ else
     "exit: $status" "stderr: [$(cat "$box/err.txt")]"
 fi
 
+# --- 6..8. FAIL CLOSED: a guard that cannot run must PRESERVE the report ----
+# The single most important property of the extraction (INNOV-274). The old bash
+# grep could not fail; a node-backed guard can, and every one of those failures
+# must land on "keep what the vault already has".
+
+# Runs the demorepo sandbox with $2 as PATH and asserts the dst report survived
+# a MORE-labeled-than-incoming situation... except here incoming is MORE labeled,
+# so the ONLY reason to keep the old report is that the guard could not answer.
+assert_fail_closed() { # label path_override
+  local label="$1" path_override="$2" box status
+  box="$(new_sandbox)"
+  make_report "$box/$DST_REL" 3 0 "Vault Label"      # existing: 3 named
+  make_report "$box/$SRC_REL" 40 0 "Rebuild Label"   # incoming: 40 named — would
+                                                     # be ALLOWED by the real rule
+  cp "$box/$DST_REL" "$box/dst.before"
+  status="$(run_sync "$box" "$path_override")"
+  assert_files_identical "fail-closed/$label/report-preserved" \
+    "$box/dst.before" "$box/$DST_REL"
+  if grep -qF 'could not run' "$box/err.txt"; then
+    pass "fail-closed/$label/stderr-says-guard-could-not-run"
+  else
+    fail "fail-closed/$label/stderr-says-guard-could-not-run" \
+      "expected stderr to state that the label guard could not run" \
+      "exit: $status" "stderr: [$(cat "$box/err.txt")]" "stdout: [$(cat "$box/out.txt")]"
+  fi
+  # The graph itself still mirrors: refusing the report must not abort the sync.
+  assert_files_identical "fail-closed/$label/graph-still-mirrored" \
+    "$box/repos/demorepo/graphify-out/graph.json" "$box/vault/graphify/demorepo/graph.json"
+}
+
+# 6. node missing from PATH entirely.
+NONODE="$(path_without_prog node)"
+if PATH="$NONODE" command -v node >/dev/null 2>&1; then
+  fail "fail-closed/no-node/report-preserved" "could not build a node-free PATH for this case"
+  fail "fail-closed/no-node/stderr-says-guard-could-not-run" "could not build a node-free PATH"
+  fail "fail-closed/no-node/graph-still-mirrored" "could not build a node-free PATH"
+else
+  assert_fail_closed "no-node" "$NONODE"
+fi
+
+# 7. node present but the guard blows up (broken/absent module, bad runtime).
+assert_fail_closed "broken-guard" "$BROKEN_NODE:$STUBS:$PATH"
+
+# 8. guard exits 0 but prints something that is not a verdict.
+assert_fail_closed "garbage-output" "$NOISY_NODE:$STUBS:$PATH"
+
 # ================================================================= PART C ===
 # Defect 3 — no-args runs must only sync mirrors whose repo-side graph.json
 #            actually DIFFERS from the vault copy, announcing the selection on
@@ -322,16 +483,7 @@ GHSTUB
 }
 
 # $PATH with every directory that contains a `gh` executable removed.
-path_without_gh() {
-  local out="" d
-  local IFS=:
-  for d in $PATH; do
-    [[ -n "$d" ]] || continue
-    [[ -e "$d/gh" || -e "$d/gh.exe" || -e "$d/gh.cmd" || -e "$d/gh.bat" ]] && continue
-    out="${out:+$out:}$d"
-  done
-  printf '%s' "$out"
-}
+path_without_gh() { path_without_prog gh; }
 
 # A `gh` that reports no open PRs, used as the default for the PART C cases so
 # no case can reach the real gh (and therefore the network).
@@ -557,17 +709,14 @@ subject_of_head() { # box
 # concurrent-session case. sync-graph.sh invokes it as
 # `BRAIN_ROOT=<vault> node build-community-notes.mjs <name>`, so the stub can
 # find the vault from the environment. Never fails the run.
+# It is built on the same dispatcher as $STUBS/node so the label guard still runs
+# for real: the HEAD move must happen at the build-community-notes step (AFTER the
+# copy), exactly as the concurrent-session scenario describes.
 HEAD_MOVER="$TMPROOT/head-mover"
-mkdir -p "$HEAD_MOVER"
-cat >"$HEAD_MOVER/node" <<'MOVER'
-#!/usr/bin/env bash
-# test stub — simulates another session committing in the shared working tree
+write_node_dispatcher "$HEAD_MOVER" '# test stub — simulates another session committing in the shared working tree
 if [[ -n "${BRAIN_ROOT:-}" ]]; then
   git -C "$BRAIN_ROOT" commit -q --allow-empty -m "concurrent session commit" >/dev/null 2>&1 || true
-fi
-exit 0
-MOVER
-chmod +x "$HEAD_MOVER/node"
+fi'
 
 # --- 20. commit REFUSED on 'main' -----------------------------------------
 new_multi_sandbox_on_branch main

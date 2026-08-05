@@ -32,6 +32,15 @@
 # --all opts back into the old "every mirror under graphify/" scope, skipping the
 # staleness filter (it still prints the selected list to stderr).
 #
+# LABEL GUARD: the vault-side GRAPH_REPORT.md is only overwritten when the
+# incoming report names at least as many communities as the existing one. That
+# rule (and the definition of "named") lives in bin/label-guard.mjs, shared with
+# /brain:label's label-communities.mjs — see INNOV-274. It is enforced by running
+# `node bin/label-guard.mjs --may-replace`, and it FAILS CLOSED: if node is
+# missing, the module is broken, or the answer is anything we do not recognise,
+# the existing report is KEPT and the sync says so on stderr. graph.json and
+# manifest.json still mirror.
+#
 # COMMIT GUARD: if the vault's current branch has an open PR (per `gh`), the sync
 # is left staged/uncommitted rather than piling commits onto a branch under
 # review. Pass --force-commit to override. If `gh` is missing, unauthenticated,
@@ -98,18 +107,53 @@ done
 # --no-commit wins over --force-commit if both were passed.
 if [[ $COMMIT -eq 0 ]]; then FORCE_COMMIT=0; fi
 
-# Prints how many NON-generic community headings the report at $1 has — i.e. how
-# many communities someone (LLM or /brain:label) actually named in it. A missing,
-# unreadable or empty file counts as 0. Always exits 0, always prints one integer.
-count_named_labels() {
-  local file="${1:-}" n
-  if [[ ! -f "$file" || ! -r "$file" ]]; then
-    echo 0
+# THE LABEL RULE LIVES IN bin/label-guard.mjs (INNOV-274).
+#
+# This script used to carry count_named_labels(): a pair of greps encoding its
+# own idea of "a named community heading", feeding an `incoming >= existing`
+# comparison. label-communities.mjs encoded the SAME concept a second time, in a
+# regex, and neither knew about the other. Both now call one module, so the two
+# commands that touch community labels (/brain:save here, /brain:label there)
+# cannot drift apart.
+LABEL_GUARD="$SCRIPT_DIR/label-guard.mjs"
+
+# Asks the shared module whether the incoming report ($2) may overwrite the
+# existing one ($1). Prints ONE line to stdout for the caller to parse:
+#
+#   allow <existing_named> <incoming_named>   → copying is safe
+#   refuse <existing_named> <incoming_named>  → copying would destroy labels
+#   error                                     → COULD NOT DECIDE
+#
+# `error` covers every way this can go wrong: node missing from PATH, the module
+# unreadable or deleted, a malformed/unreadable report, an unrecognised exit
+# code, unexpected stdout — anything at all. There is deliberately no fourth
+# outcome, and no path on which a failure is reported as `allow`.
+#
+# FAIL-CLOSED DIRECTIONS (the whole point of this guard):
+#   node missing / module gone / crash / garbage stdout → `error` → NOT copied.
+#   verdict is anything but the literal word `allow`    → NOT copied.
+#   guard says `allow` and exit status is 0             → copied.
+# The single case that errs toward copying is "the module ran, exited 0 and said
+# allow" — i.e. it positively decided there is nothing to lose. Silence is never
+# consent here.
+#
+# Always exits 0 itself, so `set -e` cannot turn a refusal into an aborted sync.
+label_guard_verdict() { # existing_report incoming_report
+  local existing="${1:-}" incoming="${2:-}" out="" rc=0 verdict="" have="" want=""
+  out="$(node "$LABEL_GUARD" --may-replace "$existing" "$incoming" 2>/dev/null)" || rc=$?
+  read -r verdict have want <<<"${out:-}" || true
+  # Both counts must be plain integers, or we did not understand the answer.
+  if [[ ! "$have" =~ ^[0-9]+$ || ! "$want" =~ ^[0-9]+$ ]]; then
+    echo "error"
     return 0
   fi
-  n="$(grep -E '^### Community [0-9]+ - "' "$file" 2>/dev/null | grep -Evc -- '- "Community [0-9]+"$' || true)"
-  n="${n//[^0-9]/}"
-  echo "${n:-0}"
+  if [[ $rc -eq 0 && "$verdict" == "allow" ]]; then
+    echo "allow $have $want"
+  elif [[ $rc -eq 10 && "$verdict" == "refuse" ]]; then
+    echo "refuse $have $want"
+  else
+    echo "error"
+  fi
   return 0
 }
 
@@ -174,13 +218,28 @@ for repo in "${repos[@]}"; do
   # (a same-count relabel or plain content refresh) still copies. graph.json syncs
   # below either way; stubs regenerate from the preserved report + new graph
   # (member-overlap matching keeps stub filenames stable).
+  #
+  # The rule itself is label-guard.mjs's (shared with /brain:label). That makes
+  # this guard depend on `node` BEFORE the copy, whereas build-community-notes.mjs
+  # (also node) only runs after — so a missing node now surfaces earlier. That is
+  # deliberate and consistent with the guard's whole purpose: the two failures are
+  # not symmetric. Stubs not regenerating is recoverable (re-run the sync); a
+  # report overwritten because we could not check it is not. So a node/module
+  # failure REFUSES the report copy, exactly as an explicit refusal does, and only
+  # the report — graph.json and manifest.json still mirror, and the vault keeps
+  # the report it already had.
   if [[ -f "$src/GRAPH_REPORT.md" ]]; then
-    existing_named="$(count_named_labels "$dst/$name-GRAPH_REPORT.md")"
-    incoming_named="$(count_named_labels "$src/GRAPH_REPORT.md")"
-    if (( incoming_named < existing_named )); then
+    guard_verdict=""; existing_named=""; incoming_named=""
+    read -r guard_verdict existing_named incoming_named \
+      <<<"$(label_guard_verdict "$dst/$name-GRAPH_REPORT.md" "$src/GRAPH_REPORT.md")" || true
+    if [[ "$guard_verdict" == "allow" ]]; then
+      cp "$src/GRAPH_REPORT.md" "$dst/$name-GRAPH_REPORT.md"
+    elif [[ "$guard_verdict" == "refuse" ]]; then
       echo "preserving labeled report for $name: incoming has $incoming_named named communities, existing has $existing_named — run /brain:label $name to refresh labels" >&2
     else
-      cp "$src/GRAPH_REPORT.md" "$dst/$name-GRAPH_REPORT.md"
+      # FAIL CLOSED. We could not establish that the copy is safe, so we do not
+      # copy. Loud, because a silently un-refreshed report is its own trap.
+      echo "preserving labeled report for $name: the label guard could not run (node and/or $LABEL_GUARD) — the existing report was NOT overwritten. Fix the guard, then re-run; /brain:label $name can refresh labels." >&2
     fi
   fi
   rm -f "$dst/GRAPH_REPORT.md"  # drop legacy generic name if a prior sync left one
