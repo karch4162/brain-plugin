@@ -28,35 +28,16 @@
 
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join, basename, relative } from 'node:path';
-import { resolveRepos, normalizeRemote } from './resolve-repos.mjs';
-import { execFileSync } from 'node:child_process';
-
-/**
- * Does `path` exist at `rev` in the repo at `root`?
- *   true  — present at that revision
- *   false — revision is known, path is not in it
- *   null  — cannot tell (rev not fetched, git unavailable, not a repo)
- * The three-way return is the point: "I don't have that commit" must never be
- * reported as "that file is missing".
- */
-function gitHas(root, rev, path) {
-  const run = (args) => {
-    try {
-      execFileSync('git', ['-C', root, ...args], { stdio: 'ignore', timeout: 10000 });
-      return true;
-    } catch {
-      return false;
-    }
-  };
-  if (!run(['cat-file', '-e', `${rev}^{commit}`])) return null; // rev unknown locally
-  return run(['cat-file', '-e', `${rev}:${path}`]);
-}
+// `source:` anchor resolution (repos.json identity, checkout discovery, pinned
+// revisions, the three-state verdict) lives in ONE place and is shared with
+// check-anchors.mjs — see brain/bin/anchors.mjs. Two implementations of one
+// resolver is the defect, not the convenience.
+import { buildAnchorContext, classifyAnchors, parseFrontmatter } from './anchors.mjs';
 
 const argv = process.argv.slice(2);
 const argVal = (flag) => (argv.indexOf(flag) >= 0 ? argv[argv.indexOf(flag) + 1] : undefined);
 
 const VAULT = argVal('--vault') || process.env.BRAIN_ROOT || process.env.CLAUDE_PROJECT_DIR || process.cwd();
-const HOME = process.env.HOME || process.env.USERPROFILE || '~';
 
 const STALE_DAYS = Number(argVal('--stale-days')) || 45;
 // hot.md targets ~500 words (see the save skill); flag past 1.5x so a slightly
@@ -69,72 +50,14 @@ if (!existsSync(join(VAULT, 'wiki'))) {
   process.exit(1);
 }
 
-// Covered repos = the mirror folders under graphify/ (was a hardcoded list in the pilot).
-const COVERED = existsSync(join(VAULT, 'graphify'))
-  ? readdirSync(join(VAULT, 'graphify'), { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name)
-  : [];
-
-// Where the covered repos are checked out. Never assume a fixed layout: honor an
-// explicit REPOS_DIR, else auto-detect the two common layouts (repos one or two levels
-// above the vault) by checking which actually contains a covered repo. Persist a real
-// REPOS_DIR via /brain:init for anything non-standard.
-const REPOS_DIR = resolveReposDir(VAULT, COVERED);
-function resolveReposDir(vault, covered) {
-  if (process.env.REPOS_DIR) return process.env.REPOS_DIR.replace(/^~/, HOME);
-  for (const c of [join(vault, '..'), join(vault, '..', '..')]) {
-    if (covered.some((r) => existsSync(join(c, r)))) return c;
-  }
-  return join(vault, '..');
-}
-
-// Canonical repo names → local checkout folder, read from each checkout's git
-// remote. A `source:` anchor's first segment is a *repo name*, not a folder name —
-// devs check the same repo out under different folders (store-hub vs edge after a
-// rename), and broken-source results must not depend on whose laptop runs the scan.
-const repoByName = new Map();
-
-// Preferred: the vault's repos.json identity map (name → remote + subPath),
-// resolved per-repo against this machine. Handles repos that live at a sub-path
-// of a shared checkout, and repos that do not share a parent directory at all —
-// neither of which the REPOS_DIR-relative scan below can express. Read-only
-// here: /brain:init and /brain:doctor own writing repos.local.json, so a scan
-// never mutates the vault outside its own report.
-const identity = resolveRepos(VAULT, [REPOS_DIR, join(VAULT, '..')]);
-for (const [name, dir] of identity.paths) repoByName.set(name, dir);
-
-// Fallback for vaults with no repos.json: the original REPOS_DIR-relative scan,
-// keyed by folder name and by git remote. Kept so existing vaults keep working
-// unchanged until they are seeded.
-if (existsSync(REPOS_DIR)) {
-  for (const e of readdirSync(REPOS_DIR, { withFileTypes: true })) {
-    if (!e.isDirectory()) continue;
-    const dir = join(REPOS_DIR, e.name);
-    if (!repoByName.has(e.name)) repoByName.set(e.name, dir); // folder name always resolves
-    const cfg = join(dir, '.git', 'config');
-    if (existsSync(cfg)) {
-      const m = readFileSync(cfg, 'utf8').match(/^\s*url\s*=\s*\S*?([^\/:]+?)(?:\.git)?\s*$/m);
-      if (m && !repoByName.has(m[1])) repoByName.set(m[1], dir);
-    }
-  }
-}
-
-// Repos the vault claims to cover: graphify/ mirrors plus anything named in
-// repos.json. A name here that did not resolve above is *unverifiable*, not rot.
-const CLAIMED = [...new Set([...COVERED, ...Object.keys(identity.identity || {})])];
-
-// Entry name (lowercased) → normalized remote, for the area cross-check below.
-// repos.json may contain SUB-PATH ALIASES — entries like `docs` or `lib` that are
-// directories inside some repo, not repos themselves. An alias globally reserves
-// its first segment across EVERY note in the vault, so an anchor written relative
-// to the note's own repo (`docs/x.md` meaning tray-insight's docs/) silently
-// resolves into the alias's repo instead. If a same-named file happens to exist
-// there it verifies GREEN against the wrong repo — the invisible direction.
-// Comparing REMOTES (not names) keeps legitimate same-checkout aliases quiet:
-// a kds note anchored `android/…` matches because KDS and the android alias both
-// live in the monorepo remote.
-const remoteByName = new Map();
-for (const [name, spec] of Object.entries(identity.identity || {}))
-  remoteByName.set(name.toLowerCase(), normalizeRemote(spec?.remote));
+// Everything `source:` anchor resolution needs — covered repos (the graphify/
+// mirror folders), the REPOS_DIR search hint, repos.json identity resolved
+// against this machine, the CLAIMED list and the sub-path-alias remote map —
+// is built once, by the shared resolver. Read-only: /brain:init and
+// /brain:doctor own writing repos.local.json, so a scan never mutates the vault
+// outside its own report.
+const ANCHORS = buildAnchorContext(VAULT);
+const COVERED = ANCHORS.covered;
 
 // ---- collect markdown files --------------------------------------------------
 function walk(dir, acc = []) {
@@ -181,14 +104,7 @@ for (const repo of COVERED) {
 function parseNote(file) {
   // Normalize CRLF→LF: notes may be mixed (Windows/Unix), and the regex anchors on \n.
   const text = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
-  const fm = {};
-  const m = text.match(/^---\n([\s\S]*?)\n---/);
-  if (m) {
-    for (const line of m[1].split('\n')) {
-      const kv = line.match(/^(\w[\w-]*):\s*(.*)$/);
-      if (kv) fm[kv[1]] = kv[2].trim();
-    }
-  }
+  const fm = parseFrontmatter(text);
   const links = wikilinks(text);
   // tags: [a, b, c]  → ['a','b','c']
   const tags = fm.tags
@@ -258,88 +174,28 @@ for (const n of parsed) {
   //    "unverifiable" (no local checkout, so we genuinely cannot tell).
   //    Conflating the two makes an engineer who simply hasn't cloned a repo see
   //    every note for it reported as rot, and acting on that queue means
-  //    re-anchoring notes that were already correct.
-  // A note may assert that its source is intentionally not in git (a scratch
-  // dir, a local-only config, a path the repo's .graphifyignore excludes as
-  // secret-shaped). Absence is the documented fact, so checking it is wrong.
-  const untracked = /^(true|yes)$/i.test(n.fm.source_untracked || '');
-  if (n.fm.source && !untracked) {
-    for (const srcRaw of n.fm.source.split(';')) {
-      let src = srcRaw.trim().split('#')[0].trim().replace(/\s*\(.*$/, '');
-      // Strip location suffixes that are NOT part of the filename:
-      //   path@<rev>  a pinned commit/branch — verified against git below
-      //   path:123    a line number in colon form (the #L123 form is already gone)
-      // Without this they are stat'd as literal filenames and always "missing".
-      let rev = null;
-      const revM = src.match(/@([0-9a-fA-F]{7,40}|(?:refs\/|origin\/)[\w./-]+)$/);
-      if (revM) { rev = revM[1]; src = src.slice(0, -revM[0].length); }
-      src = src.replace(/:\d+(-\d+)?$/, '');
-      // URLs (with or without a scheme — `github.com/org/repo/...` is a link, not
-      // a path), and prose → skip.
-      if (!src || /^https?:\/\//i.test(src) || /^[\w-]+(\.[\w-]+)+\//.test(src) || !src.includes('/')) continue;
-      // Resolve against a covered repo root, else against the vault.
-      let resolved = null;
-      const firstSeg = src.split('/')[0];
-      // Cross-check the note's wiki area against the repo the anchor resolves
-      // into — BEFORE any file check, because the dangerous direction is a
-      // FALSE GREEN: a `docs/x.md` anchor in wiki/tray-insight/ resolving into
-      // tray-architecture (the `docs` alias) verifies healthy whenever a
-      // same-named file exists there, and nothing else will ever surface it.
-      // Different remotes is the signal; existence of the file is moot. The
-      // fix is a qualified anchor (`tray-insight/docs/x.md`), never a note edit
-      // to whatever path the alias happens to point at.
-      {
-        const areaM = rel.match(/^wiki\/([^/]+)\//);
-        const areaRemote = areaM ? remoteByName.get(areaM[1].toLowerCase()) : undefined;
-        const anchorRemote = remoteByName.get(firstSeg.toLowerCase());
-        if (areaRemote && anchorRemote && areaRemote !== anchorRemote) {
-          areaMismatchSources.push({ from: rel, source: src, repo: firstSeg, area: areaM[1] });
-          continue;
-        }
-      }
-      if (repoByName.has(firstSeg)) {
-        resolved = join(repoByName.get(firstSeg), src.split('/').slice(1).join('/'));
-      } else if (CLAIMED.includes(firstSeg)) {
-        // The vault claims this repo (a graphify/ mirror and/or a repos.json
-        // entry) but no checkout of it resolved on this machine. The mirror and
-        // the identity map travel with the vault; the checkout does not. Absence
-        // of the file here is evidence of nothing — do not call it rot.
-        unverifiableSources.push({ from: rel, source: src, repo: firstSeg });
-        continue;
-      } else if (existsSync(join(VAULT, src))) {
-        resolved = join(VAULT, src);
-      } else {
-        // try each covered repo as the implicit root
-        for (const repo of COVERED) {
-          if (existsSync(join(REPOS_DIR, repo, src))) { resolved = join(REPOS_DIR, repo, src); break; }
-        }
-      }
-      if (!resolved) {
-        // Nothing claimed this anchor's first segment — it names a repo the vault
-        // has no mirror and no repos.json entry for. Previously this was dropped
-        // in silence, so a report could look clean while anchors went unchecked.
-        // Surface it: unverifiable, with the fix being a repos.json entry.
-        unverifiableSources.push({ from: rel, source: src, repo: firstSeg, reason: 'unknown' });
-        continue;
-      }
-      if (rev) {
-        // A pinned revision is a claim about git history, not the working tree —
-        // the file may legitimately be absent from the current branch (an
-        // unmerged feature branch is exactly why anchors get pinned). Ask git.
-        const m = identity.meta.get(firstSeg);
-        if (!m) { unverifiableSources.push({ from: rel, source: srcRaw.trim(), repo: firstSeg, reason: 'unknown' }); continue; }
-        const inRepo = [m.subPath, src.split('/').slice(1).join('/')].filter(Boolean).join('/');
-        const seen = gitHas(m.root, rev, inRepo);
-        if (seen === null)
-          // Rev not present locally (never fetched, or pruned). Cannot be judged.
-          unverifiableSources.push({ from: rel, source: srcRaw.trim(), repo: firstSeg, reason: 'rev' });
-        else if (!seen)
-          brokenSources.push({ from: rel, source: srcRaw.trim(), looked: `${inRepo} @ ${rev}` });
-        continue;
-      }
-      if (!existsSync(resolved))
-        brokenSources.push({ from: rel, source: src, looked: relative(VAULT, resolved).replace(/\\/g, '/') });
-    }
+  //    re-anchoring notes that were already correct. The classification itself
+  //    lives in anchors.mjs — shared verbatim with the /brain:promote gate
+  //    (check-anchors.mjs), so both answer this question identically.
+  for (const a of classifyAnchors(ANCHORS, { rel, source: n.fm.source, sourceUntracked: n.fm.source_untracked })) {
+    if (a.state === 'broken')
+      brokenSources.push({
+        from: a.from,
+        source: a.source,
+        // `looked` is vault-relative for a working-tree miss, and already a
+        // "<repo-relative path> @ <rev>" string for a pinned-revision miss.
+        looked: a.rev ? a.looked : relative(VAULT, a.looked).replace(/\\/g, '/'),
+      });
+    else if (a.state === 'mismatch')
+      areaMismatchSources.push({ from: a.from, source: a.source, repo: a.repo, area: a.area });
+    else if (a.state === 'unresolvable' && a.reason !== 'external')
+      // `external` (a PR/URL anchor) is off-machine by design and was never part
+      // of this report; the promote gate is where it gets surfaced.
+      unverifiableSources.push(
+        a.reason === 'no-checkout'
+          ? { from: a.from, source: a.source, repo: a.repo }
+          : { from: a.from, source: a.source, repo: a.repo, reason: a.reason }
+      );
   }
 }
 

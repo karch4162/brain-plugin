@@ -50,9 +50,23 @@ Present a recommendation per draft (`promote to wiki/<area>/` · `merge into [[e
 
 Ensure each keeper has:
 - `owner` — default to the vault's git user; flag placeholder owners.
-- a `source:` anchor — the `repo/file#anchor`, PR, or commit that makes the fact true. **Verify the anchor resolves** (file exists under `REPOS_DIR` / the PR is real). No verifiable source → tell the user; they either supply one or the note stays a draft.
+- a `source:` anchor — the `repo/file#anchor`, PR, or commit that makes the fact true. **Whether it resolves is decided by the script below, never by your reading of the path.**
 - `last_verified:` = today — but only after you actually re-checked the claim against the source (a promote is a verification event, not a rubber stamp).
 - an honest `confidence` — promotion usually raises `low` → `medium`; only the user can call `high`.
+
+**Then run the anchor gate — don't reason about it, run it.** The trusted tier's only claim to trust is the anchor, so it is checked mechanically, with the *same* resolver `/brain:freshness` uses (`repos.json` identity keyed on the git remote, sub-path repos, pinned revisions via git — not path-guessing under `REPOS_DIR`):
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/check-anchors.mjs" wiki/_drafts/<keeper>.md [...]   # from the vault root, or with BRAIN_ROOT=<vault> set
+```
+No arguments checks every note in `wiki/_drafts/`. Pass the keepers explicitly when only some drafts are being promoted.
+
+- **Exit `0` (`ANCHORS: OK`) →** every anchor verified on this machine. Go to step 4. The line carries the counts — quote it in the step 5 report.
+- **Exit `1` (`ANCHORS: BROKEN`) →** the repo **is** on this machine and the file **is not**: the note points at something that moved. **Those notes do not get promoted this run.** Relay the script's `ANCHORS: BROKEN` line to the user **verbatim** — it names the notes, the anchors and where it looked; do not paraphrase or re-derive it — then either re-anchor to where the fact lives now (a note edit the user approves) and re-run until the script stops naming them, or leave them as drafts. Unaffected keepers may still proceed in the same batch.
+- **Exit `2` (`ANCHORS: UNVERIFIABLE`) →** **not a block.** Nothing is broken; these simply could not be checked here (repo claimed by the vault but not cloned, unknown repo prefix, a pinned revision this clone never fetched, a PR/URL that is off-machine), or a note carries no `source:` at all. Relay the script's `ANCHORS: UNVERIFIABLE` line **verbatim**, then **ask** (`AskUserQuestion`): promote anyway, or hold until the repos are cloned / an anchor is supplied. **Never "resolve" one by editing the note to a path you did not check** — that manufactures a green anchor. A note with no `source:` at all stays a draft unless the user supplies one.
+- A vault with no drafts, or a path that isn't there, exits `0` — this is a gate against promoting unverifiable claims, not a file-existence assertion.
+
+> Why this is a script: on 2026-08-04 nine notes were promoted to trusted with `source: hub/docs/…` anchors that could not resolve on the promoting machine. The rule existed — as prose in this file, pointing at a resolution path that no longer matched `freshness.mjs`. Prose drifts; the exit code doesn't. Unverifiable stays a *choice* rather than a block precisely so the choice is made out loud.
 
 *(Full note schema + one-fact-per-note, tagging, and `[[_COMMUNITY_*]]` code-linking rules live in the vault's own `CLAUDE.md` → "Writing to the wiki" — that's the authority; don't duplicate it.)*
 
@@ -70,7 +84,7 @@ Ensure each keeper has:
 1. Branch in the vault repo (e.g. `promote/drafts-<date>`).
 2. Commit the moves, index lines, and merge edits. Dropped drafts are deleted in the same branch.
 3. Open a PR per the vault's convention. PR body: table of promoted notes (draft → target), merges, drops with reasons, and any still-pending drafts with what blocks them.
-4. Report the same summary to the user, plus the new `_drafts/` count (goal: zero or a short, young queue).
+4. Report the same summary to the user, plus the new `_drafts/` count (goal: zero or a short, young queue) and step 3's `ANCHORS:` verdict line with its counts — including how many promoted notes went out with an anchor that could not be verified here, and on whose say-so.
 
 ## Notes
 
