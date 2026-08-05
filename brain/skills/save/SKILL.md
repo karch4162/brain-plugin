@@ -50,8 +50,14 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    - **First: `git status --porcelain wiki/hot.md`.** Uncommitted edits here are about to be overwritten by the rewrite and are **not recoverable** — step 0's guard only catches the committed kind. If the file is dirty, show `git diff wiki/hot.md` and ask before continuing; if it's this session's own work in progress, continue.
    - Update the `_Last refreshed:_` date.
    - **Rewrite** "Current focus" to only what is actually in flight *now*. **Delete** any bullet describing a prior session or work that's finished — do not add "Prior session:" bullets, ever.
-   - **Hard budget: after your edit, the whole file must be ≤ ~500 words.** If it's over, keep cutting — oldest/stalest bullets first — until it isn't. Roughly: if a bullet wouldn't change what the next session does, it goes.
-   - **Measure it — don't eyeball it.** After every edit to the file, run `wc -w wiki/hot.md`; if the count is over 500, cut and re-run until it isn't. The budget is not met until the command says so. **Hard stop: do not proceed to step 4 until `wc -w wiki/hot.md` has actually printed a number ≤ 500.**
+   - **Hard budget: after your edit, the whole file must be ≤ 500 words.** If it's over, keep cutting — oldest/stalest bullets first — until it isn't. Roughly: if a bullet wouldn't change what the next session does, it goes.
+   - **The budget is enforced by a script, not by your judgement.** Don't eyeball it and don't hand-count — after the rewrite, run the guard:
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/bin/check-hot-budget.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
+     ```
+     - **Exit `0` (`HOT-BUDGET: OK`) →** the file is within budget; go on to step 4. The line reports the actual count, so quote it in the output block.
+     - **Exit `1` (`HOT-BUDGET: OVER`) →** **stop here.** Cut the stalest bullets and re-run the script. Repeat until it exits `0`. **Do not proceed to step 4 while it exits `1`**, and do not "fix" it by editing once and assuming — the script's word is the only word. If you end up unable to get under, relay the script's `HOT-BUDGET: OVER` line to the user **verbatim** — it names the count, the budget and the overage; do not paraphrase or re-derive it.
+     - A vault with no `wiki/hot.md` yet (mid-setup) exits `0` — this is a bloat guard, not a file-existence check. `HOT_WORD_BUDGET=<n>` overrides the 500-word default.
    - Why this is enforced: `/brain:resume` reads this file first every session, and step 5c re-extracts it into the wiki concept graph on every save — a bloated hot.md makes *every* future save slower and noisier. `/brain:freshness` flags the file when it exceeds ~750 words; treat that finding as "this step was skipped."
 
 4. **Append one line to `wiki/log.md`** (append-only operation log), e.g.:
@@ -108,7 +114,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 ```
 Saved. Log: logs/<date>-<slug>.md
 Freshness: <up to date | fast-forwarded from origin/main | BLOCKED — <script's reason>>
-hot.md <refreshed | refresh SKIPPED (branch not fresh)> · log.md appended
+hot.md <refreshed (<n> words / <budget> budget) | refresh SKIPPED (branch not fresh)> · log.md appended
 Graph sync: <synced repos | not needed this session>
 Committed locally (not pushed). Open loops carried forward: <n>
 ```

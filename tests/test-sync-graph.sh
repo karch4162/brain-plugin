@@ -521,6 +521,254 @@ status="$(run_sync_ex "$MBOX" --no-commit --force-commit)"
 head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
 assert_eq "flags/no-commit-beats-force-commit" "$head_before" "$head_after"
 
+# ================================================================= PART D ===
+# INNOV-270 ask 1 — never auto-commit onto a protected/default branch (a run
+#            committed straight onto protected `main`; GitHub logged a bypassed
+#            rule violation). Detection: origin/HEAD, then `gh repo view`, then
+#            the literal names main/master as an always-on safety net.
+#            --force-commit overrides; --no-commit still beats --force-commit.
+# INNOV-270 ask 3 — pin HEAD (branch + sha) at start and re-check right before
+#            committing; a HEAD that moved mid-run ABORTS the commit even with
+#            --force-commit, because the caller's intent is then unknown.
+# INNOV-269 — `--all` opts back into syncing every mirror, bypassing the
+#            staleness filter; the bare run stays filtered.
+
+echo "--- D. protected-branch guard, HEAD pin, --all ---"
+
+# Puts the multi sandbox on branch $1 (creating it), leaving MBOX assigned.
+new_multi_sandbox_on_branch() { # branch
+  new_multi_sandbox
+  git -C "$MBOX/vault" checkout -q -B "$1" >/dev/null 2>&1
+}
+
+make_alpha_stale() { # box
+  printf '{"nodes":["alpha","alpha2"],"links":[]}\n' >"$1/repos/alpha/graphify-out/graph.json"
+}
+
+staged_count() { # box
+  git -C "$1/vault" diff --cached --name-only 2>/dev/null | grep -c . || true
+}
+
+subject_of_head() { # box
+  git -C "$1/vault" log -1 --format=%s 2>/dev/null || true
+}
+
+# A `node` that moves the vault's HEAD while the sync is mid-flight — the
+# concurrent-session case. sync-graph.sh invokes it as
+# `BRAIN_ROOT=<vault> node build-community-notes.mjs <name>`, so the stub can
+# find the vault from the environment. Never fails the run.
+HEAD_MOVER="$TMPROOT/head-mover"
+mkdir -p "$HEAD_MOVER"
+cat >"$HEAD_MOVER/node" <<'MOVER'
+#!/usr/bin/env bash
+# test stub — simulates another session committing in the shared working tree
+if [[ -n "${BRAIN_ROOT:-}" ]]; then
+  git -C "$BRAIN_ROOT" commit -q --allow-empty -m "concurrent session commit" >/dev/null 2>&1 || true
+fi
+exit 0
+MOVER
+chmod +x "$HEAD_MOVER/node"
+
+# --- 20. commit REFUSED on 'main' -----------------------------------------
+new_multi_sandbox_on_branch main
+make_alpha_stale "$MBOX"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+status="$(run_sync_ex "$MBOX")"
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+assert_eq "protected/no-commit-on-main" "$head_before" "$head_after"
+if grep -qF 'NOT COMMITTING' "$MBOX/err.txt" && grep -qF "main" "$MBOX/err.txt"; then
+  pass "protected/main-stderr-names-branch"
+else
+  fail "protected/main-stderr-names-branch" \
+    "expected a NOT COMMITTING message on stderr naming 'main'" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+if [[ "$(staged_count "$MBOX")" -gt 0 ]]; then
+  pass "protected/main-leaves-sync-staged"
+else
+  fail "protected/main-leaves-sync-staged" \
+    "expected the sync to be left STAGED (git diff --cached non-empty)" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
+fi
+
+# --- 21. commit REFUSED on 'master' ---------------------------------------
+new_multi_sandbox_on_branch master
+make_alpha_stale "$MBOX"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+status="$(run_sync_ex "$MBOX")"
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+assert_eq "protected/no-commit-on-master" "$head_before" "$head_after"
+
+# --- 22. commit REFUSED on the DETECTED origin/HEAD default branch ---------
+# 'trunk' is not in the literal main/master net, so only origin/HEAD detection
+# can catch it.
+new_multi_sandbox_on_branch trunk
+git -C "$MBOX/vault" update-ref refs/remotes/origin/trunk "$(git -C "$MBOX/vault" rev-parse HEAD)" >/dev/null 2>&1
+git -C "$MBOX/vault" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/trunk >/dev/null 2>&1
+make_alpha_stale "$MBOX"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+status="$(run_sync_ex "$MBOX")"
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+assert_eq "protected/no-commit-on-detected-origin-head-default" "$head_before" "$head_after"
+if grep -qF 'trunk' "$MBOX/err.txt"; then
+  pass "protected/detected-default-stderr-names-branch"
+else
+  fail "protected/detected-default-stderr-names-branch" \
+    "expected stderr to name the detected default branch 'trunk'" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+
+# --- 23. commit ALLOWED on a normal feature branch ------------------------
+# Same setup, branch that is neither main/master nor origin/HEAD: must commit.
+new_multi_sandbox_on_branch "brain/feature-work"
+make_alpha_stale "$MBOX"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+status="$(run_sync_ex "$MBOX")"
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+if [[ "$head_before" != "$head_after" ]]; then
+  pass "protected/feature-branch-still-commits"
+else
+  fail "protected/feature-branch-still-commits" \
+    "a non-default branch must still auto-commit; HEAD did not move" \
+    "head: $head_before" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+if [[ "$(subject_of_head "$MBOX")" == Sync\ graph\ mirror* ]]; then
+  pass "head-pin/branch-unchanged-commits-normally"
+else
+  fail "head-pin/branch-unchanged-commits-normally" \
+    "expected HEAD's subject to be the sync commit" \
+    "actual subject: [$(subject_of_head "$MBOX")]" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
+fi
+
+# --- 24. --force-commit overrides the protected-branch refusal ------------
+new_multi_sandbox_on_branch main
+make_alpha_stale "$MBOX"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+status="$(run_sync_ex "$MBOX" --force-commit)"
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+if [[ "$head_before" != "$head_after" ]]; then
+  pass "protected/force-commit-overrides"
+else
+  fail "protected/force-commit-overrides" \
+    "expected --force-commit to commit onto main anyway; HEAD did not move" \
+    "head: $head_before" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+
+# --- 25. --no-commit still beats --force-commit on a protected branch -----
+new_multi_sandbox_on_branch main
+make_alpha_stale "$MBOX"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+status="$(run_sync_ex "$MBOX" --no-commit --force-commit)"
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+assert_eq "flags/no-commit-beats-force-commit-on-protected" "$head_before" "$head_after"
+
+# --- 26. HEAD moved mid-run => commit aborted -----------------------------
+new_multi_sandbox_on_branch "brain/feature-work"
+make_alpha_stale "$MBOX"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+SYNC_PATH="$HEAD_MOVER:$GH_NONE:$STUBS:$PATH"
+status="$(run_sync_ex "$MBOX")"
+SYNC_PATH=""
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+if [[ "$(subject_of_head "$MBOX")" == "concurrent session commit" ]]; then
+  pass "head-pin/moved-head-aborts-commit"
+else
+  fail "head-pin/moved-head-aborts-commit" \
+    "the sync must NOT commit after HEAD moved mid-run" \
+    "expected HEAD subject: [concurrent session commit]" \
+    "actual HEAD subject:   [$(subject_of_head "$MBOX")]" \
+    "sha before: $head_before  sha after: $head_after" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+if grep -qF "$head_before" "$MBOX/err.txt" && grep -qF "$head_after" "$MBOX/err.txt"; then
+  pass "head-pin/stderr-reports-then-and-now-shas"
+else
+  fail "head-pin/stderr-reports-then-and-now-shas" \
+    "expected stderr to print both the pinned sha and the current sha" \
+    "then: $head_before" "now:  $head_after" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
+fi
+if [[ "$(staged_count "$MBOX")" -gt 0 ]]; then
+  pass "head-pin/moved-head-leaves-sync-staged"
+else
+  fail "head-pin/moved-head-leaves-sync-staged" \
+    "expected the sync to be left STAGED after the abort" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
+fi
+
+# --- 27. HEAD moved mid-run aborts EVEN WITH --force-commit ---------------
+new_multi_sandbox_on_branch "brain/feature-work"
+make_alpha_stale "$MBOX"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+SYNC_PATH="$HEAD_MOVER:$GH_NONE:$STUBS:$PATH"
+status="$(run_sync_ex "$MBOX" --force-commit)"
+SYNC_PATH=""
+if [[ "$(subject_of_head "$MBOX")" == "concurrent session commit" ]]; then
+  pass "head-pin/force-commit-does-not-bypass"
+else
+  fail "head-pin/force-commit-does-not-bypass" \
+    "--force-commit must NOT bypass the HEAD pin: intent is unknown once HEAD moved" \
+    "expected HEAD subject: [concurrent session commit]" \
+    "actual HEAD subject:   [$(subject_of_head "$MBOX")]" \
+    "sha before: $head_before" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+
+# --- 28. --all selects NON-STALE mirrors too ------------------------------
+new_multi_sandbox
+status="$(run_sync_ex "$MBOX" --all --no-commit)"
+if grep -qF 'selected 2 mirror(s)' "$MBOX/err.txt" \
+  && grep -qF 'alpha' "$MBOX/err.txt" && grep -qF 'beta' "$MBOX/err.txt"; then
+  pass "all-flag/selects-every-mirror"
+else
+  fail "all-flag/selects-every-mirror" \
+    "expected 'selected 2 mirror(s)' naming alpha and beta with --all" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+if grep -qF 'nothing to sync' "$MBOX/all.txt"; then
+  fail "all-flag/does-not-say-nothing-to-sync" \
+    "--all must bypass the staleness filter, not report 'nothing to sync'" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
+else
+  pass "all-flag/does-not-say-nothing-to-sync"
+fi
+assert_eq "all-flag/exit-0" "0" "$status"
+
+# --- 29. bare run still filters to stale only (with --all available) ------
+new_multi_sandbox
+make_alpha_stale "$MBOX"
+snapshot_beta "$MBOX"
+status="$(run_sync_ex "$MBOX" --no-commit)"
+if grep -qF 'selected 1 mirror(s)' "$MBOX/err.txt" && ! grep -qF 'beta' "$MBOX/err.txt"; then
+  pass "all-flag/bare-run-still-filters-to-stale"
+else
+  fail "all-flag/bare-run-still-filters-to-stale" \
+    "a bare run must still select only the stale mirror (alpha), not beta" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
+fi
+assert_files_identical "all-flag/bare-run-leaves-beta-untouched" \
+  "$MBOX/beta.before.graph" "$MBOX/vault/graphify/beta/graph.json"
+
+# --- 30. explicit args still bypass filtering (unaffected by --all) -------
+new_multi_sandbox
+make_alpha_stale "$MBOX"
+snapshot_beta "$MBOX"
+status="$(run_sync_ex "$MBOX" --no-commit "$MBOX/repos/beta")"
+if grep -qF 'beta' "$MBOX/all.txt" && ! grep -qF 'selected' "$MBOX/err.txt"; then
+  pass "explicit-arg/still-unfiltered-and-unselected"
+else
+  fail "explicit-arg/still-unfiltered-and-unselected" \
+    "an explicit repo arg must be processed directly, with no selection step" \
+    "exit: $status" "stdout: [$(cat "$MBOX/out.txt")]" "stderr: [$(cat "$MBOX/err.txt")]"
+fi
+# alpha IS stale but was not named, so it must be left alone — its vault copy
+# still differs from the repo-side graph.
+assert_files_differ "explicit-arg/stale-alpha-not-swept-in" \
+  "$MBOX/repos/alpha/graphify-out/graph.json" "$MBOX/vault/graphify/alpha/graph.json"
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"
