@@ -31,7 +31,26 @@
 #                       Refuses if either moved. See "HEAD PIN" below.
 #   --force-commit      overrides the OPEN-PR guard ONLY. It does NOT override the
 #                       protected-branch guard or the HEAD pin — see below.
-#   --print-allowlist   print the resolved allowlist entries and exit 0.
+#   --print-allowlist   print THIS VAULT's resolved allowlist entries and exit 0.
+#   --print-required    print the paths shipped brain commands commit, TSV
+#                       "<path>\t<which command needs it>", and exit 0. Needs no
+#                       vault — it is a property of the plugin, not of a vault.
+#
+# THE REQUIRED SET (INNOV-278). A vault whose .saveinclude omits a path that a
+# shipped command commits is broken in a quiet way: the command does its file
+# work, then this script refuses to commit it. That is exactly what the 0.2.22
+# upgrade did to every vault created before it — `graphify/` had never needed to
+# be allowlisted, because sync-graph.sh used to run its own `git add`.
+#
+# So the required set lives HERE, next to the enforcement, and `/brain:doctor`
+# reads it rather than keeping its own copy. A second list in the doctor skill
+# is the INNOV-274 defect — one rule, two implementations, drifting apart — and
+# it would drift in the most useless direction possible: the checker would go
+# stale exactly when a new committed path made the check matter.
+#
+# Adding a path a shipped command commits? Add it here. tests/test-vault-commit.sh
+# asserts that every path sync-graph.sh passes to this script appears below, so
+# forgetting fails the suite rather than shipping a checker that cannot see it.
 #
 # Contract (callers and tests depend on exactly this):
 #   exit 0  => committed, or there was nothing to commit (both say which on stdout)
@@ -94,7 +113,21 @@ MESSAGE=""
 PIN=""
 FORCE_COMMIT=0
 PRINT_ALLOWLIST=0
+PRINT_REQUIRED=0
 PATHS=()
+
+# The paths shipped brain commands commit — the single source of truth, read by
+# /brain:doctor's allowlist check. See "THE REQUIRED SET" in the header before
+# editing. Format: "<path>\t<which command needs it, and why>".
+REQUIRED=(
+  $'logs/\t/brain:save — the dated session log'
+  $'wiki/hot.md\t/brain:save — the rolling session cache'
+  $'wiki/log.md\t/brain:save and bin/sync-graph.sh — the append-only operation log'
+  $'graphify/\tbin/sync-graph.sh — the mirrored code graphs, one folder per covered repo'
+  $'graphify-out/graph.json\t/brain:save step 5c — the vault-s own wiki concept graph'
+  $'graphify-out/GRAPH_REPORT.md\t/brain:save step 5c — the wiki graph report'
+  $'graphify-out/communities/\t/brain:save step 5c — wiki graph community stubs'
+)
 
 refuse() { # reason-line, then extra lines
   {
@@ -120,11 +153,21 @@ while [[ $# -gt 0 ]]; do
     --pin=*)           PIN="${1#*=}"; shift ;;
     --force-commit)    FORCE_COMMIT=1; shift ;;
     --print-allowlist) PRINT_ALLOWLIST=1; shift ;;
+    --print-required)  PRINT_REQUIRED=1; shift ;;
     --)                END_OF_FLAGS=1; shift ;;
     -*)                refuse "unknown flag '$1'" "  See the usage block at the top of vault-commit.sh." ;;
     *)                 PATHS+=("$1"); shift ;;
   esac
 done
+
+# --print-required is answered BEFORE any vault check: it describes the plugin,
+# not a vault, so /brain:doctor can ask what the required set is on a machine
+# with no vault bound at all — which is precisely the machine most likely to be
+# misconfigured.
+if [[ $PRINT_REQUIRED -eq 1 ]]; then
+  printf '%s\n' "${REQUIRED[@]}"
+  exit 0
+fi
 
 if [[ $PRINT_ALLOWLIST -eq 0 && -z "$MESSAGE" ]]; then
   refuse "no commit message" "  Pass -m \"<message>\"."
