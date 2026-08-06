@@ -24,6 +24,24 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
 4c. **Sub-path aliases in `repos.json`** — entries that have a `subPath` **and** no matching `graphify/` mirror folder are *aliases* (a directory inside some repo), not repos. Each alias **globally reserves its first segment**: every anchor in the vault starting with that segment resolves into the alias's repo, whatever area the note lives in — and if a same-named file exists there, it verifies GREEN against the wrong repo. **List them** with the repo they point into (e.g. `docs/ → tray-architecture`, `lib/ → tray_pos_flutter`) so the operator knows which segments are reserved; call out generic ones every repo has (`lib`, `docs`, `scripts`, `src`). ⚠️ **informational, no repair** — aliases are load-bearing (they make anchors machine-independent) and freshness cross-checks each note's area against the resolved repo's remote; the point is that new aliases get added *deliberately*, knowing the reserved segment.
 5. **Registry health** — `~/.claude/brain/registry.json` parses as JSON; each vault `path` exists and is **OS-native absolute** (Windows `C:/...`, not git-bash `/c/...`, which `path.resolve` mangles). Bad form → R3.
 6. **Local graph (cwd repo)** — `graphify-out/graph.json` present (so the hook fires) and, if `graphify-out/.graphify_python` exists, it points at an interpreter that still exists. Stale → R4.
+7. **Brain plugin version drift** — check 3 does exactly this for graphify; this turns it on ourselves. **Run the script, don't reason about it:**
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/check-plugin-version.sh"
+   ```
+   - **Exit `0` (`PLUGIN-VERSION: OK`) →** ✅, quote the version.
+   - **Exit `1` (`PLUGIN-VERSION: DRIFTED`) →** ❌ → **R6**. Relay the line **verbatim** — it names both versions and the install path.
+   - **`PLUGIN-VERSION: SKIPPED` (exit `0`) →** ⚠️ **"skipped — <reason>", never ✅.** A machine running from source (`--plugin-dir`) legitimately skips. A false ✅ here is what this check exists to prevent.
+
+   Why it matters: measured 2026-08-06, the author's own install was **0.2.19 against a 0.2.22 source** — missing `vault-commit.sh`, `write-hot.sh`, `check-hot-budget.sh`, `label-guard.mjs` and `check-anchors.mjs`. **Nine shipped fixes were not running**, and INNOV-265 was very likely filed against an already-fixed defect for exactly this reason. A stale install doesn't misbehave; it behaves like an older, worse version of itself, silently.
+8. **Vault allowlist covers the write set** — a `.saveinclude` missing a path a shipped command commits means that command does its file work and then `vault-commit.sh` refuses to commit it: the work lands on disk, the commit never happens. Every vault created before `0.2.22` has this (`graphify/` was never allowlisted, because `sync-graph.sh` used to run its own `git add`).
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/check-allowlist.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
+   ```
+   - **Exit `0` (`ALLOWLIST: OK`) →** ✅.
+   - **Exit `1` (`ALLOWLIST: INCOMPLETE`) →** ❌ → **R7**. The script names each missing path *and which command needs it*; relay that, don't re-derive it.
+   - Skip if check 4 failed — bind a vault first. A non-vault dir reports OK/skipped.
+
+   **The required set is not listed here, deliberately.** It comes from `vault-commit.sh --print-required`, which is where the enforcement lives. A second copy in this skill would be the INNOV-274 defect, drifting in the most useless direction: this checker would go stale exactly when a newly-committed path made it matter.
 
 ## Repairs (ask before R1 — it reinstalls a global tool)
 
@@ -45,6 +63,18 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
   ```
   Preserve any existing keys; use OS-native absolute paths (R3's rule). Derive `REPOS_DIR` from the registry entry's `repos_dir` when present; otherwise find the directory that actually contains the `graphify/` mirror names and **confirm it with the user** rather than guessing. Ensure the file is gitignored in the vault. Non-destructive, but it only takes effect in a **new** session — the `env` block is injected at session start, so re-run `/brain:freshness` afterwards in a fresh session to confirm.
 
+- **R6 — stale brain plugin install.** **Two commands, in this order.** Verified 2026-08-06 by running them against a real 0.2.19 → 0.2.22 drift:
+  ```bash
+  claude plugin marketplace update <marketplace>     # refresh the local clone
+  claude plugin update <plugin>@<marketplace>        # install what the clone now offers
+  ```
+  **The second alone is not enough, and this is the trap.** `claude plugin update` reads the *local marketplace clone*, so when that clone is itself stale it finds nothing new and reports success-shaped output while changing nothing. Both were stale on the machine this was written on. Confirm with `check-plugin-version.sh`, then **restart the session (or `/reload-plugins`)** — an updated copy is not live until then. Non-destructive: the cache is version-keyed (`cache/<mp>/<plugin>/<version>/`), so the previous version stays on disk and is available to roll back to.
+- **R7 — vault allowlist missing required paths.** Append them:
+  ```bash
+  BRAIN_ROOT=<vault> bash "${CLAUDE_PLUGIN_ROOT}/bin/check-allowlist.sh" --fix
+  ```
+  **Appends only** — never overwrites, reorders, or removes, and never re-seeds from the template. A vault's `.saveinclude` is customized (one real vault carries `wiki/_drafts/`), and a template overwrite would silently drop those entries. Each appended line is commented with which command needs it. Show the diff and confirm before running — this is a governance file. Afterwards it must be **committed deliberately**: `.saveinclude` is not in the allowlist, so no brain command will ever commit it for you.
+
 ## Prevention (why pinning matters)
 
 The churn is driven by graphify's own skill auto-running `uv tool install --upgrade graphifyy` whenever
@@ -65,5 +95,7 @@ Brain doctor — <vault name or path>
   repo aliases         ⚠️ 6 sub-path aliases reserve: android/ docs/ groovy/ lib/ scripts/ terraform/
   registry             ✅ 1 vault, paths valid + OS-native
   local graph (cwd)    ⚠️ graphify-out/ present · .graphify_python STALE → offer R4
+  brain plugin         ❌ installed 0.2.19, marketplace offers 0.2.22 → offer R6
+  vault allowlist      ❌ .saveinclude missing 1 of 7: graphify/ (bin/sync-graph.sh) → offer R7
 <then apply confirmed repairs and re-check>
 ```
