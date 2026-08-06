@@ -16,7 +16,7 @@
 #   bash sync-graph.sh --all                               # sync EVERY mirror under <vault>/graphify/
 #   bash sync-graph.sh --no-commit [...]                   # copy + log only, no git commit
 #   bash sync-graph.sh --force-commit [...]                # commit even if the vault branch has an open PR
-#                                                          # or is the protected/default branch
+#                                                          # (NOT the protected branch — see COMMITTING below)
 #
 # Flags may appear in any order, anywhere before the repo args. If both
 # --no-commit and --force-commit are given, --no-commit wins.
@@ -41,23 +41,27 @@
 # the existing report is KEPT and the sync says so on stderr. graph.json and
 # manifest.json still mirror.
 #
-# COMMIT GUARD: if the vault's current branch has an open PR (per `gh`), the sync
-# is left staged/uncommitted rather than piling commits onto a branch under
-# review. Pass --force-commit to override. If `gh` is missing, unauthenticated,
-# or errors, the guard is skipped and the commit proceeds as before — a vault
-# with no GitHub remote keeps working.
+# COMMITTING IS NOT THIS SCRIPT'S JOB (INNOV-275). Every guard that used to live
+# here — open-PR, protected branch, HEAD pin — now lives in bin/vault-commit.sh,
+# the single commit path shared with /brain:save. This script captures the HEAD
+# pin at start, copies files, and hands the commit over. It carries no commit
+# rules of its own, so it cannot drift from the ones /brain:save enforces.
 #
-# PROTECTED-BRANCH GUARD: the sync is never auto-committed onto the repo's
-# default/protected branch (this script once committed straight onto a protected
-# `main`, and GitHub logged a bypassed rule violation). The default branch is
-# detected from origin/HEAD, then `gh repo view`, and finally by treating the
-# literal names main/master as protected — the last one is the safety net, so a
-# vault with no remote and no `gh` still refuses. --force-commit overrides.
+# What that buys, and what it costs, in one line each:
+#   • the commit is refused on the protected/default branch, with NO override —
+#     --force-commit used to bypass that here, and INNOV-275 retires it. A human
+#     who genuinely means to commit onto main can run git by hand.
+#   • --force-commit still overrides the OPEN-PR guard only.
+#   • a refusal now leaves NOTHING staged (it used to leave the sync staged).
+#     The index is shared by every session in the checkout, so leaving a payload
+#     in it hands the next session a commit it never chose. Re-run instead.
+#   • the sync's file copies, log.md line and stub regeneration all still happen;
+#     only the commit is withheld.
 #
-# HEAD PIN: the vault's branch + commit SHA are recorded at start and re-checked
-# immediately before committing. If either moved (a concurrent session merged a
-# PR and moved HEAD mid-run), the commit is ABORTED and left staged.
-# --force-commit does NOT override this one — see the comment at the check.
+# HEAD PIN: the vault's branch + commit SHA are recorded at start and passed to
+# vault-commit.sh, which re-checks them immediately before committing. If either
+# moved (a concurrent session merged a PR and moved HEAD mid-run), the commit is
+# refused. --force-commit does NOT override that one.
 #
 # Override per machine: REPOS_DIR=~/code BRAIN_ROOT=<vault> bash sync-graph.sh
 set -euo pipefail
@@ -266,126 +270,32 @@ PY
   synced+=("$name")
 done
 
-# Prints the number of the open PR whose head is the vault's CURRENT branch, or
-# nothing at all when there is no such PR *or* when we simply cannot tell (gh
-# missing, unauthenticated, no remote, API error). This is a safety net, not a
-# hard dependency: "unknown" must look exactly like "no PR" so a vault with no
-# GitHub remote keeps committing as it always has.
-open_pr_for_current_branch() {
-  local branch pr
-  command -v gh >/dev/null 2>&1 || return 0
-  branch="$(git -C "$VAULT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-  [[ -n "$branch" && "$branch" != "HEAD" ]] || return 0
-  # gh has no -C; run it from inside the vault so it resolves that repo's remote.
-  pr="$(cd "$VAULT" 2>/dev/null && gh pr list --state open --head "$branch" \
-        --json number --jq '.[0].number' 2>/dev/null || true)"
-  pr="${pr//[^0-9]/}"
-  [[ -n "$pr" ]] && echo "$pr"
-  return 0
-}
-
-# Prints the vault repo's default branch name, or nothing when it cannot be
-# determined. Tried in order, first hit wins:
-#   (a) the local origin/HEAD symbolic ref (works offline, no gh needed),
-#   (b) `gh repo view --json defaultBranchRef` when gh exists and is authed.
-# EVERY method degrades silently to "unknown" — an error, a missing tool or a
-# vault with no remote must never be reported as a branch name. The literal
-# main/master fallback lives in branch_is_protected(), not here, because it is a
-# safety net rather than a detection result.
-detect_default_branch() {
-  local ref db
-  ref="$(git -C "$VAULT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-  ref="${ref#origin/}"
-  ref="${ref//[[:space:]]/}"
-  if [[ -n "$ref" ]]; then
-    echo "$ref"
-    return 0
-  fi
-  if command -v gh >/dev/null 2>&1; then
-    # gh has no -C; run it from inside the vault so it resolves that repo's remote.
-    db="$(cd "$VAULT" 2>/dev/null && gh repo view --json defaultBranchRef \
-          --jq '.defaultBranchRef.name' 2>/dev/null || true)"
-    db="${db//[[:space:]]/}"
-    if [[ -n "$db" ]]; then
-      echo "$db"
-      return 0
-    fi
-  fi
-  return 0
-}
-
-# True when branch $1 must never receive an automatic commit: it is the detected
-# default branch, or (safety net, always on) literally main/master.
-branch_is_protected() {
-  local branch="${1:-}" default
-  [[ -n "$branch" && "$branch" != "HEAD" ]] || return 1
-  default="$(detect_default_branch)"
-  if [[ -n "$default" && "$branch" == "$default" ]]; then return 0; fi
-  # Safety net: a vault with no remote and no gh must STILL refuse to auto-commit
-  # onto main/master. This one deliberately does not degrade to "not protected".
-  if [[ "$branch" == "main" || "$branch" == "master" ]]; then return 0; fi
-  return 1
-}
-
+# --- commit, via THE one guarded commit path (INNOV-275) --------------------
+# Everything this block used to do by hand — open-PR detection, default-branch
+# detection, the protected-branch refusal, the HEAD-pin re-check, the staging —
+# now lives in vault-commit.sh, because /brain:save needed all of it too and a
+# second copy would drift. This script's remaining job is to say WHAT to commit
+# (the two paths it wrote) and WHEN it started (the pin).
+#
+# The paths must be covered by the vault's .saveinclude or vault-commit.sh will
+# refuse — deliberately. "The sync may commit graph mirrors" is a statement about
+# what the vault permits, so it belongs in the vault's allowlist, not hardcoded
+# in the syncer. The shipped template lists both.
 if [[ ${#synced[@]} -gt 0 && $COMMIT -eq 1 ]]; then
-  git -C "$VAULT" add graphify wiki/log.md
-
-  cur_branch="$(git -C "$VAULT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-  cur_sha="$(git -C "$VAULT" rev-parse HEAD 2>/dev/null || true)"
-
-  # HEAD PIN: re-read branch + SHA and compare with what we pinned before copying.
-  # A moved HEAD means a concurrent session merged/checked out something under us,
-  # so the branch this commit would land on is NOT the one the caller selected.
-  # --force-commit deliberately does NOT bypass this check: --force-commit means
-  # "I know about the open PR / protected branch and want it anyway", but a moved
-  # HEAD makes the caller's intent genuinely unknown — there is nothing to force.
-  head_moved=0
-  if [[ "$cur_branch" != "$HEAD_BRANCH_AT_START" || "$cur_sha" != "$HEAD_SHA_AT_START" ]]; then
-    head_moved=1
+  vc_args=(-m "Sync graph mirror(s): ${synced[*]}")
+  # Only pin when we actually read a branch+SHA at start; a non-git vault has
+  # neither, and an empty pin would be a parse failure rather than "unpinned".
+  if [[ -n "$HEAD_BRANCH_AT_START" && -n "$HEAD_SHA_AT_START" ]]; then
+    vc_args+=(--pin "$HEAD_BRANCH_AT_START:$HEAD_SHA_AT_START")
   fi
+  [[ $FORCE_COMMIT -eq 1 ]] && vc_args+=(--force-commit)
+  vc_args+=(-- graphify/ wiki/log.md)
 
-  # COMMIT GUARD: don't pile a large mechanical sync onto a branch that is already
-  # under review (a prior run committed 607 files onto a branch with an open PR),
-  # and never commit onto the protected/default branch.
-  open_pr=""
-  protected_branch=""
-  if [[ $FORCE_COMMIT -eq 0 ]]; then
-    open_pr="$(open_pr_for_current_branch)"
-    if branch_is_protected "$cur_branch"; then protected_branch="$cur_branch"; fi
-  fi
-
-  if [[ $head_moved -eq 1 ]]; then
-    {
-      echo "NOT COMMITTING: the vault's HEAD moved while this sync was running."
-      echo "  branch then: ${HEAD_BRANCH_AT_START:-?}   branch now: ${cur_branch:-?}"
-      echo "  sha then:    ${HEAD_SHA_AT_START:-?}   sha now:    ${cur_sha:-?}"
-      echo "Another session probably changed branches or merged underneath this run,"
-      echo "so the commit would land somewhere its author never selected."
-      echo "The sync was left STAGED and uncommitted. Staged for commit:"
-      git -C "$VAULT" diff --cached --name-only | sed 's/^/  /'
-      echo "Mirrors synced: ${synced[*]}"
-      echo "Re-check the branch, then commit deliberately (git -C \"$VAULT\" commit)."
-      echo "--force-commit does NOT override this guard."
-    } >&2
-  elif [[ -n "$open_pr" ]]; then
-    {
-      echo "NOT COMMITTING: branch '$cur_branch' has open PR #$open_pr."
-      echo "The sync was left STAGED and uncommitted. Staged for commit:"
-      git -C "$VAULT" diff --cached --name-only | sed 's/^/  /'
-      echo "Mirrors synced: ${synced[*]}"
-      echo "Commit deliberately (git -C \"$VAULT\" commit), or re-run with --force-commit."
-    } >&2
-  elif [[ -n "$protected_branch" ]]; then
-    {
-      echo "NOT COMMITTING: '$protected_branch' is the protected/default branch."
-      echo "The sync was left STAGED and uncommitted. Staged for commit:"
-      git -C "$VAULT" diff --cached --name-only | sed 's/^/  /'
-      echo "Mirrors synced: ${synced[*]}"
-      echo "Create a working branch first (git -C \"$VAULT\" checkout -b brain/sync-graph),"
-      echo "then commit deliberately (git -C \"$VAULT\" commit), or re-run with --force-commit."
-    } >&2
-  else
-    git -C "$VAULT" commit -m "Sync graph mirror(s): ${synced[*]}"
-    echo "Committed. Push when ready: git -C \"$VAULT\" push"
+  if ! BRAIN_ROOT="$VAULT" bash "$SCRIPT_DIR/vault-commit.sh" "${vc_args[@]}"; then
+    # vault-commit.sh has already explained itself on stderr, in detail. Add only
+    # what it cannot know: which mirrors were synced, so the work is not lost
+    # track of. The copies, the log.md line and the stubs are all on disk.
+    echo "Mirrors synced (files written, commit refused above): ${synced[*]}" >&2
+    exit 1
   fi
 fi

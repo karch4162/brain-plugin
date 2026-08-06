@@ -80,6 +80,7 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
    ```bash
    ( cd "<vault>" && git add -A && git commit -m "chore: scaffold brain vault" )   # .gitignore is in place, so chats/ + machine files stay excluded
    ```
+   **This is the one commit in the plugin that does not go through `bin/vault-commit.sh`, and the exception is narrow: a brand-new vault, `git init`ed seconds ago, empty, with no remote and no other session.** Every guard vault-commit.sh applies is either meaningless here (there is no protected branch to protect, no PR, no concurrent session) or actively wrong (the allowlist it enforces is one of the files being created by this very commit — it cannot gate its own creation). It applies to case **(b) only**: an **existing** vault takes path (a), which adds missing governance files but **does not commit them** — the user commits those deliberately. From the second commit onward, every write to any vault goes through `vault-commit.sh`.
 
    In **both** cases, append the vault to the registry with its governance profile.
 

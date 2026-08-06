@@ -1,9 +1,21 @@
-# .saveinclude — the allowlist of paths /brain:save may stage for a direct commit.
+# .saveinclude — the allowlist of paths any brain command may commit.
 # One path or glob per line; blank lines and # comments are ignored.
 #
-# /brain:save stages ONLY what's listed here — it never runs `git add -A`. This keeps
-# commits intentional and stops private/sensitive content from being published by
-# accident. Customize it to your trust model:
+# THIS FILE IS THE VAULT'S PERMISSION MODEL. Every command that commits goes
+# through bin/vault-commit.sh, and that script does two things with this list:
+#   1. it stages only what's listed here — never `git add -A`; and
+#   2. it then VERIFIES the whole git index against this list, and refuses the
+#      commit if anything outside it is staged.
+# (2) is what makes the rule hold: the git index is shared by every session in
+# the checkout, so a concurrent session or a stray `git add` can stage anything
+# at all. Checking the index — not just being careful about what we add — is what
+# turns "we only commit allowlisted paths" from an intention into a property.
+#
+# A vault with no .saveinclude cannot commit through the tooling at all. That is
+# deliberate: there is no safe default. Committing everything would publish
+# private content; committing nothing would make every save a silent no-op.
+#
+# Customize it to your trust model:
 #   • ADD a path to let /brain:save commit it directly.
 #   • REMOVE (or never list) a path to keep it local / require manual staging.
 #   • Want something kept out entirely? Put it under a gitignored path (e.g. chats/)
@@ -16,6 +28,15 @@
 logs/
 wiki/hot.md
 wiki/log.md
+
+# The vault's OWN concept graph, built over wiki/ (step 5c).
 graphify-out/graph.json
 graphify-out/GRAPH_REPORT.md
 graphify-out/manifest.json
+graphify-out/communities/
+
+# The mirrored code graphs, one folder per covered repo, written by
+# bin/sync-graph.sh. Its commit goes through vault-commit.sh like everything
+# else, so leaving this off means the sync copies files and then refuses to
+# commit them.
+graphify/

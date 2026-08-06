@@ -101,5 +101,28 @@ Sync all mirrors at once with the plugin's `bin/sync-graph.sh` (run with `BRAIN_
 
 ## Git conventions
 
-- Knowledge changes via PR when they touch trusted notes; direct commits OK for `logs/`, `chats/`, drafts.
+- **Never run `git add` / `git commit` against this vault.** One command commits, and it is
+  `bin/vault-commit.sh` in the brain plugin — `/brain:save` and `bin/sync-graph.sh` both call it.
+  **The script is the gate; a branch rule is at best an optional net.** It refuses on the
+  protected/default branch (no override), refuses if HEAD moved underneath the command, refuses on a
+  branch with an open PR (`--force-commit` overrides that one only), and stages *only* `.saveinclude`
+  paths — then verifies the whole git index against that allowlist, because the index is shared by
+  every session in this checkout and anything at all can already be sitting in it.
+  A refusal stages nothing; re-run it after fixing what it named. Working around it with raw git is
+  how a commit landed on protected `main` on 2026-08-05.
+- **`.saveinclude` is this vault's permission model** — one path or glob per line. Add a path to allow
+  committing it; leave it off to keep it local. `bash "${CLAUDE_PLUGIN_ROOT}/bin/vault-commit.sh"
+  --print-allowlist` shows the resolved list.
+- Knowledge changes via PR when they touch trusted notes — those are deliberately **not** in
+  `.saveinclude`, so no command auto-commits them; `/brain:promote` opens the PR, and the PR *is* the
+  promotion. Direct commits are fine for `logs/`, drafts and the mechanical artifacts.
+- **Never edit `wiki/hot.md` by hand.** It is rewritten wholesale, so two overlapping sessions silently
+  discard each other with no merge conflict — the only unrecoverable loss in this vault. Write the new
+  version to a temp file and install it via `bin/write-hot.sh --pin` / `--write`, which refuses if the
+  file moved underneath you.
+- Running two sessions against this vault at once is not safe on its own: `HEAD` and the git index are
+  **global to the checkout**, so one session's `checkout` or merge silently changes the branch the other
+  believes it is on. The guards above make that detectable rather than damaging. For genuinely parallel
+  work, give each session its own `git worktree` — that removes the shared `HEAD` and shared index at
+  the root instead of papering over them.
 - `graph.json` is regenerated, never hand-edited; the graphify merge driver handles parallel commits.

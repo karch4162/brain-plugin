@@ -91,6 +91,103 @@ Run **`/brain:freshness`** from the vault for a rot review queue — orphans, de
 
 You don't "use" the wiki by hand — agents resolve context through the **graph → wiki → raw** rule automatically (the graph-before-grep hook nudges it). `wiki/hot.md` is the per-vault entry cache `/brain:resume` loads first.
 
+## Governance: what actually protects the vault
+
+**The script is the gate. A platform rule is an optional net.** That ordering is deliberate, and this section says plainly what each layer does and does not protect against — the layering used to be undocumented, and the model it had in practice was backwards.
+
+### Why not "protected `main` + required PR" on its own
+
+The vault has two kinds of writes, and only one of them is reviewable:
+
+| | Mechanical / derived | Knowledge / curated |
+|---|---|---|
+| What | graph mirrors, community stubs, session logs, `hot.md`, `log.md` | trusted `wiki/` notes, promotions, merges |
+| Share of commits | ~90% | ~10% |
+| Regenerable | yes — rebuild from source | no, it **is** the content |
+| Is review meaningful | **no** | **yes** |
+
+Applying a code-review gate uniformly across that mix fails in both directions. Of the thirteen defects in the workstream that produced these guards — `hot.md` shipped at 709 words twice, a 440-community label clobber, 125 residual generic stubs, 9 unverifiable promotions, a mis-scoped graph, a silent label-key mismatch — **a pull request would have caught none.** Every one happened in the working tree, and every one would have passed review looking fine, because nobody reads a 607-file regenerated graph diff. Meanwhile the PR requirement taxes the mechanical majority with a rubber-stamp step, which trains people to merge without reading — worse than no gate, because it looks like one.
+
+The split already exists in the design: `.saveinclude` deliberately excludes trusted `wiki/` notes, and `/brain:promote` already treats the PR as the promotion event. What was missing is that the split lived only in the allowlist, and nothing enforced it.
+
+### The deciding fact
+
+Measured 2026-08-05, across the two real vaults:
+
+| | `karch4162/personal-brain` | `vendsy/tray-brain` |
+|---|---|---|
+| Owner / plan | user, free | org, Team |
+| Branch protection | **impossible** — API 403, *"Upgrade to GitHub Pro or make this repository public"* | active: PR required, 1 approval |
+| `enforce_admins` | n/a | `false` — which is why a 2026-08-05 push to `main` succeeded and was merely logged |
+| Rulesets | **impossible** — same 403 | available, none defined |
+
+**One of the two vaults cannot have platform-level enforcement at all, and never will on its current plan.** So the primary gate has to be the tooling. A platform rule can only ever be a bonus, on one vault.
+
+### Layer 1 — the gate: `bin/vault-commit.sh` (this is the one that holds)
+
+Every command that commits to a vault goes through it. `/brain:save` step 6 and `bin/sync-graph.sh` call it; nothing else runs `git commit` against a vault. It enforces, mechanically:
+
+| Refusal | Override |
+|---|---|
+| the **protected/default branch** (detected via `origin/HEAD` → `gh repo view` → literal `main`/`master` as an always-on net) | **none** |
+| **HEAD moved** since the caller pinned it — a concurrent session changed branches or merged underneath the run | **none** |
+| the branch has an **open PR** | `--force-commit` |
+| **no `.saveinclude`**, or an empty one | **none** |
+| the git index contains **any path outside `.saveinclude`** | **none** |
+
+The last row is the one that makes the guarantee real. The git index is **global to the checkout**, so a concurrent session or a stray `git add` can stage anything at all; being careful about what *we* add only governs what we add. Checking the index before committing is what turns "we only commit allowlisted paths" from an intention into a property. And every guard runs *before* the first `git add`, so a refusal leaves the index exactly as it found it — nothing staged, nothing to clean up.
+
+**What it does not protect against:** someone running raw `git` outside the tooling. That is a real and permanent hole — but it is already the situation on `personal-brain` (no platform enforcement possible), and `enforce_admins: false` makes it effectively the situation on `tray-brain` too. Recording the trade honestly is the point; pretending branch protection closed it was the error.
+
+**What `.saveinclude` is:** the vault's whole permission model, one path or glob per line. Add a path to permit committing it, leave a path off to keep it local. Trusted `wiki/` notes are deliberately absent — knowledge changes go via `/brain:promote`'s PR. Check the resolved list with:
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/bin/vault-commit.sh" --print-allowlist
+```
+
+### Layer 2 — the optional net: a `wiki/**` push ruleset
+
+Only worth adding if you want direct pushes that touch trusted notes to bounce at the platform. It is a **net, not a gate**: it catches accidental and casual writes; it is not what keeps the vault correct.
+
+**First, check your plan can do this at all.** Push rulesets are available on GitHub **Team and Enterprise**; they are **unavailable on free personal repos**, where both branch protection and rulesets return `403 Upgrade to GitHub Pro`. Verify before following the recipe:
+
+```bash
+gh api "repos/<owner>/<repo>/rulesets" --silent && echo "rulesets available" || echo "not available on this plan"
+```
+
+If that 403s, stop — layer 1 is your only layer, and it is the one that was doing the work anyway.
+
+If it succeeds, create the rule (substitute your `<owner>/<repo>` and the actor id from `gh api repos/<owner>/<repo>/collaborators`):
+
+```bash
+gh api --method POST "repos/<owner>/<repo>/rulesets" --input - <<'JSON'
+{
+  "name": "wiki-notes-need-a-pr",
+  "target": "push",
+  "enforcement": "active",
+  "bypass_actors": [
+    { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }
+  ],
+  "rules": [
+    {
+      "type": "file_path_restriction",
+      "parameters": { "restricted_file_paths": ["wiki/**"] }
+    }
+  ]
+}
+JSON
+```
+
+To remove it again: `gh api --method DELETE "repos/<owner>/<repo>/rulesets/<id>"` (find `<id>` with `gh api "repos/<owner>/<repo>/rulesets"`).
+
+**The `bypass_actors` entry is deliberate, not laziness.** `actor_id: 5` is the built-in **admin** repository role. It is there because of an unresolved question: **we do not know whether a `wiki/**` path restriction also blocks the _merge_ of a `/brain:promote` PR.** GitHub's docs do not say. A widely-repeated claim — that for PR merges the restriction is validated only against the resulting merge commit's metadata — does **not** appear in the docs page it is attributed to, so it is unverified and this README will not rely on it. If merges *are* blocked, a rule without a bypass silently severs the promotion path, and it fails confusingly: the PR opens fine and only jams at the merge button. **A safety net that cuts the promotion path is worse than no net.** With the bypass, whoever merges promote PRs is exempt either way, and the rule settles into the catch-accidents role it should have had from the start.
+
+If you want the question actually closed rather than routed around: add the rule to a repo you own, open a throwaway PR touching a `wiki/` file, try the merge, then delete the rule. ~10 minutes, fully reversible, and it settles the matter permanently.
+
+### Consequence for an already-protected vault
+
+Once layer 1 is in place, a vault currently running "protected `main` + required PR" can **drop the blanket PR requirement**, so mechanical saves stop needing a rubber stamp. `/brain:promote` keeps opening PRs regardless — it does that because promotion is a deliberate flow, not because a branch rule forces it.
+
 ## Dependencies
 
 - **graphify CLI** — *delegated, not vendored* (POC §16.1 one-installer rule). `/brain:init`

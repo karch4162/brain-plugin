@@ -516,6 +516,9 @@ new_multi_sandbox() {
   local v="$MBOX/vault" r="$MBOX/repos" name
   mkdir -p "$v/wiki"
   : >"$v/wiki/log.md"
+  # The sync's commit goes through bin/vault-commit.sh (INNOV-275), which refuses
+  # outright in a vault with no allowlist. These are the two paths the sync writes.
+  printf 'graphify/\nwiki/log.md\n' >"$v/.saveinclude"
   for name in alpha beta; do
     mkdir -p "$v/graphify/$name" "$r/$name/graphify-out"
     printf '{"nodes":["%s"],"links":[]}\n' "$name" >"$r/$name/graphify-out/graph.json"
@@ -678,7 +681,13 @@ assert_eq "flags/no-commit-beats-force-commit" "$head_before" "$head_after"
 #            committed straight onto protected `main`; GitHub logged a bypassed
 #            rule violation). Detection: origin/HEAD, then `gh repo view`, then
 #            the literal names main/master as an always-on safety net.
-#            --force-commit overrides; --no-commit still beats --force-commit.
+#            --no-commit still beats --force-commit.
+# INNOV-275 — the commit itself moved to bin/vault-commit.sh, the ONE guarded
+#            commit path shared with /brain:save. Two behaviour changes land
+#            with it, both asserted below: --force-commit NO LONGER overrides
+#            the protected-branch refusal (case 24), and a refusal now leaves
+#            NOTHING staged rather than leaving the sync in the shared index
+#            (cases 20, 26).
 # INNOV-270 ask 3 — pin HEAD (branch + sha) at start and re-check right before
 #            committing; a HEAD that moved mid-run ABORTS the commit even with
 #            --force-commit, because the caller's intent is then unknown.
@@ -725,18 +734,32 @@ head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
 status="$(run_sync_ex "$MBOX")"
 head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
 assert_eq "protected/no-commit-on-main" "$head_before" "$head_after"
-if grep -qF 'NOT COMMITTING' "$MBOX/err.txt" && grep -qF "main" "$MBOX/err.txt"; then
+if grep -qF 'VAULT-COMMIT: REFUSED' "$MBOX/err.txt" && grep -qF "main" "$MBOX/err.txt"; then
   pass "protected/main-stderr-names-branch"
 else
   fail "protected/main-stderr-names-branch" \
-    "expected a NOT COMMITTING message on stderr naming 'main'" \
+    "expected a VAULT-COMMIT: REFUSED message on stderr naming 'main'" \
     "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
 fi
-if [[ "$(staged_count "$MBOX")" -gt 0 ]]; then
-  pass "protected/main-leaves-sync-staged"
+# INNOV-275 CHANGED THIS. The old behaviour was "stage it anyway, then refuse,
+# and tell the user it was left staged". That is wrong in a shared checkout: the
+# git index is global, so a refusal that leaves a payload in it hands the NEXT
+# session's commit a set of files it never chose. vault-commit.sh runs every
+# guard before the first `git add`, so a refusal now leaves the index untouched.
+if [[ "$(staged_count "$MBOX")" -eq 0 ]]; then
+  pass "protected/main-stages-nothing"
 else
-  fail "protected/main-leaves-sync-staged" \
-    "expected the sync to be left STAGED (git diff --cached non-empty)" \
+  fail "protected/main-stages-nothing" \
+    "a refusal must leave the index exactly as it found it (git diff --cached empty)" \
+    "staged: [$(git -C "$MBOX/vault" diff --cached --name-only)]" \
+    "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
+fi
+# The sync's FILE work still happened — only the commit was withheld.
+if grep -qF 'alpha' "$MBOX/err.txt"; then
+  pass "protected/main-still-reports-synced-mirrors"
+else
+  fail "protected/main-still-reports-synced-mirrors" \
+    "the copies/log line/stubs are done; the refusal must still name what was synced" \
     "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
 fi
 
@@ -791,18 +814,26 @@ else
     "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
 fi
 
-# --- 24. --force-commit overrides the protected-branch refusal ------------
+# --- 24. --force-commit does NOT override the protected-branch refusal -----
+# INNOV-275 RETIRED THIS OVERRIDE. INNOV-270 shipped --force-commit as a bypass
+# for the protected-branch guard; that made the guard advisory, and an advisory
+# guard on the vault's most damaging operation is the failure mode this whole
+# workstream exists to remove. The protected-branch refusal is now absolute in
+# vault-commit.sh: a human who genuinely means to commit onto main can run git
+# by hand and own it — which is a different act from a script doing it for them.
+# --force-commit still overrides the OPEN-PR guard (case 17), which is coherent:
+# "yes, add this to my own PR" is an intent worth expressing.
 new_multi_sandbox_on_branch main
 make_alpha_stale "$MBOX"
 head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
 status="$(run_sync_ex "$MBOX" --force-commit)"
 head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
-if [[ "$head_before" != "$head_after" ]]; then
-  pass "protected/force-commit-overrides"
+assert_eq "protected/force-commit-does-NOT-override" "$head_before" "$head_after"
+if grep -qF 'VAULT-COMMIT: REFUSED' "$MBOX/err.txt"; then
+  pass "protected/force-commit-still-refused-loudly"
 else
-  fail "protected/force-commit-overrides" \
-    "expected --force-commit to commit onto main anyway; HEAD did not move" \
-    "head: $head_before" \
+  fail "protected/force-commit-still-refused-loudly" \
+    "--force-commit onto main must refuse, and say so" \
     "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]" "stdout: [$(cat "$MBOX/out.txt")]"
 fi
 
@@ -840,11 +871,16 @@ else
     "then: $head_before" "now:  $head_after" \
     "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
 fi
-if [[ "$(staged_count "$MBOX")" -gt 0 ]]; then
-  pass "head-pin/moved-head-leaves-sync-staged"
+# INNOV-275 CHANGED THIS — same reason as case 20, and it bites hardest here:
+# the whole premise of this case is that ANOTHER SESSION is active in the shared
+# checkout. Leaving our files staged for it to pick up is the cross-contamination
+# the ticket ranks third. A refusal now stages nothing at all.
+if [[ "$(staged_count "$MBOX")" -eq 0 ]]; then
+  pass "head-pin/moved-head-stages-nothing"
 else
-  fail "head-pin/moved-head-leaves-sync-staged" \
-    "expected the sync to be left STAGED after the abort" \
+  fail "head-pin/moved-head-stages-nothing" \
+    "a moved-HEAD refusal must leave the index untouched — another session is live in this tree" \
+    "staged: [$(git -C "$MBOX/vault" diff --cached --name-only)]" \
     "exit: $status" "stderr: [$(cat "$MBOX/err.txt")]"
 fi
 
