@@ -21,13 +21,32 @@ are *consumers* that depend on it, never the reverse.
     ├── .claude-plugin/plugin.json
     ├── skills/{save,resume,freshness,wiki-ingest,init,doctor}/SKILL.md   # user-typed /brain:* entry points + model-invoked authority
     ├── hooks/{hooks.json, graph-before-grep.mjs}
-    ├── bin/{sync-graph.sh, freshness.mjs, build-community-notes.mjs, harvest-chats.mjs}
+    ├── bin/{vault-commit.sh, write-hot.sh, sync-graph.sh, freshness.mjs,
+    │         build-community-notes.mjs, harvest-chats.mjs}
     └── templates/{CLAUDE.brain.md, graphifyignore, saveinclude, gitignore,
                    brain-registry.example.json, vault-skeleton/}
 ```
 
 Mirrors the `ai-agent-manager` plugin (the reference consumer): marketplace wrapper + nested plugin,
 `${CLAUDE_PLUGIN_ROOT}` for runtime paths. `claude plugin validate ./brain` passes.
+
+## Vault governance — the script is the gate
+
+`bin/vault-commit.sh` is the **single commit path** into any vault: `/brain:save` and `bin/sync-graph.sh`
+both go through it, and nothing else runs `git commit` against a vault. It refuses on the protected/default
+branch (no override), refuses if HEAD moved mid-command, refuses on a branch with an open PR
+(`--force-commit` overrides that one only), stages only `.saveinclude` paths, and then **verifies the whole
+git index** against that allowlist — the index is global to the checkout, so staging discipline alone
+guarantees nothing.
+
+That ordering is forced, not preferred: one of the two real vaults is a private repo on a free personal
+plan, where branch protection *and* rulesets both return `403 Upgrade to GitHub Pro`. **It cannot have
+platform-level enforcement, now or on its current plan.** A GitHub path ruleset on `wiki/**` is an optional
+net on top, available on Team/Enterprise only.
+
+Full model — why a uniform PR gate is the wrong shape for a repo that's ~90% regenerated machine output,
+what each layer does and does *not* protect against, and a copy-pasteable ruleset example with its
+`bypass_actors` caveat — is in [brain/README.md](brain/README.md#governance-what-actually-protects-the-vault).
 
 ## Developing & releasing the plugin
 

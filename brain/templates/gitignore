@@ -9,6 +9,10 @@ graphify-out/.graphify_*
 .graphify_root
 .graphify_python
 
+# Machine-local state about in-flight brain commands (the wiki/hot.md pin that
+# bin/write-hot.sh compares against). Per-checkout and per-session — never shared.
+.brain/
+
 # OS / editor
 .DS_Store
 Thumbs.db

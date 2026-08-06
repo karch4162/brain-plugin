@@ -48,6 +48,18 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 
 3. **Refresh `wiki/hot.md` — rewrite, never append.** This is a *rolling cache*, not a log; the session history already lives in `logs/` (step 2), so nothing is lost by deleting from here. Concretely:
    - **First: `git status --porcelain wiki/hot.md`.** Uncommitted edits here are about to be overwritten by the rewrite and are **not recoverable** — step 0's guard only catches the committed kind. If the file is dirty, show `git diff wiki/hot.md` and ask before continuing; if it's this session's own work in progress, continue.
+   - **Then pin the file, before you read it**, and do the rewrite through the guard. Two overlapping sessions each rewrite hot.md wholesale and the later one silently discards the earlier — with no merge conflict, because both wrote a whole file. That is the vault's **only unrecoverable loss**, so the check is mechanical and you do not do it by hand:
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/bin/write-hot.sh" --pin        # BEFORE reading hot.md
+     ```
+     Read `wiki/hot.md`, write the rewritten version to a temp file, then install it:
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/bin/write-hot.sh" --write <tmpfile>
+     ```
+     - **Exit `0` (`HOT-WRITE: OK`) →** installed; go on to the budget check below.
+     - **Exit `1` (`HOT-WRITE: REFUSED`) →** hot.md changed underneath you. **Do not edit the file directly to get around this.** Relay the script's `HOT-WRITE: REFUSED` line to the user **verbatim**, re-read the current `wiki/hot.md`, fold your changes into what's now there, then `--pin` and `--write` again.
+     - Nothing is lost on a refusal: the existing hot.md is intact and your new content is still in the temp file.
+     - **Never edit `wiki/hot.md` with the file-editing tools.** The whole point is that the check and the write are one operation; an edit made by hand is exactly the unguarded rewrite this replaces.
    - Update the `_Last refreshed:_` date.
    - **Rewrite** "Current focus" to only what is actually in flight *now*. **Delete** any bullet describing a prior session or work that's finished — do not add "Prior session:" bullets, ever.
    - **Hard budget: after your edit, the whole file must be ≤ 500 words.** If it's over, keep cutting — oldest/stalest bullets first — until it isn't. Roughly: if a bullet wouldn't change what the next session does, it goes.
@@ -56,7 +68,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
      bash "${CLAUDE_PLUGIN_ROOT}/bin/check-hot-budget.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
      ```
      - **Exit `0` (`HOT-BUDGET: OK`) →** the file is within budget; go on to step 4. The line reports the actual count, so quote it in the output block.
-     - **Exit `1` (`HOT-BUDGET: OVER`) →** **stop here.** Cut the stalest bullets and re-run the script. Repeat until it exits `0`. **Do not proceed to step 4 while it exits `1`**, and do not "fix" it by editing once and assuming — the script's word is the only word. If you end up unable to get under, relay the script's `HOT-BUDGET: OVER` line to the user **verbatim** — it names the count, the budget and the overage; do not paraphrase or re-derive it.
+     - **Exit `1` (`HOT-BUDGET: OVER`) →** **stop here.** Cut the stalest bullets — **through `write-hot.sh --write` again**, not by editing the file; the guard re-pins itself after every successful write, so a trim needs no new `--pin` — and re-run the budget script. Repeat until it exits `0`. **Do not proceed to step 4 while it exits `1`**, and do not "fix" it by editing once and assuming — the script's word is the only word. If you end up unable to get under, relay the script's `HOT-BUDGET: OVER` line to the user **verbatim** — it names the count, the budget and the overage; do not paraphrase or re-derive it.
      - A vault with no `wiki/hot.md` yet (mid-setup) exits `0` — this is a bloat guard, not a file-existence check. `HOT_WORD_BUDGET=<n>` overrides the 500-word default.
    - Why this is enforced: `/brain:resume` reads this file first every session, and step 5c re-extracts it into the wiki concept graph on every save — a bloated hot.md makes *every* future save slower and noisier. `/brain:freshness` flags the file when it exceeds ~750 words; treat that finding as "this step was skipped."
 
@@ -102,21 +114,26 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
      ```
    Skip if no `wiki/` note changed. Commit `graphify-out/graph.json` + `GRAPH_REPORT.md` + `graphify-out/communities/` with the rest (the machine-specific `.graphify_*` files are gitignored).
 
-6. **Commit only the `.saveinclude` allowlist.** `/brain:save` **never** runs `git add -A`. Stage exactly the paths listed in `.saveinclude` (one path/glob per line; `#` comments and blank lines ignored), so private content — harvested `chats/` (also gitignored), or anything kept off the list — is never published by accident:
+6. **Commit through `vault-commit.sh` — never with raw git.** This is the step that, run by hand, put a commit straight onto a protected `main` on 2026-08-05 while `sync-graph.sh`'s own guards refused one command earlier. **Do not run `git add` or `git commit` against the vault, ever** — not "just this once", not with `--force`, not because the script refused. One command does the whole step:
    ```bash
-   grep -vE '^\s*(#|$)' .saveinclude | xargs -r git add --
-   git commit -m "save: <date> session — <slug>"
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/vault-commit.sh" -m "save: <date> session — <slug>"
    ```
-   The default allowlist covers `logs/`, `wiki/hot.md`, `wiki/log.md`, and the `graphify-out/` graph artifacts. **Customize what `/brain:save` may commit by editing `.saveinclude`** — add a path to allow it, leave a path off to keep it local/manual. **Trusted `wiki/` notes are intentionally not allowlisted** — knowledge changes to trusted notes go via PR, staged separately. **Do not `git push` unless the user asks.**
+   - **Exit `0` (`VAULT-COMMIT: OK`) →** committed (or there was nothing to commit — the line says which). Quote it in the output block.
+   - **Exit `1` (`VAULT-COMMIT: REFUSED`) →** **nothing was staged and nothing was committed.** Relay the script's `VAULT-COMMIT: REFUSED` line and its remedy to the user **verbatim** — it names the branch, the offending paths and the fix; do not paraphrase, do not re-derive it, and **do not work around it with raw git**. Finish the rest of the save and report the commit as refused.
+
+   What it enforces, so you don't have to reason about any of it: it refuses on the **protected/default branch** (no override — create a branch first), refuses on a branch with an **open PR** (`--force-commit` overrides that one only), refuses if the vault's **HEAD moved** mid-run, stages **only** `.saveinclude` paths, and then **verifies the whole index** against the allowlist and refuses if a concurrent session staged anything else.
+
+   **`.saveinclude` is the permission model** — one path/glob per line, `#` comments and blanks ignored. The default allowlist covers `logs/`, `wiki/hot.md`, `wiki/log.md`, the `graphify-out/` wiki-graph artifacts and the `graphify/` repo mirrors. **Customize what may be committed by editing `.saveinclude`** — add a path to allow it, leave a path off to keep it local/manual; `bash "${CLAUDE_PLUGIN_ROOT}/bin/vault-commit.sh" --print-allowlist` shows the resolved list. Private content — harvested `chats/` (also gitignored) or anything off the list — is never published by accident. **Trusted `wiki/` notes are intentionally not allowlisted**: knowledge changes go via PR, staged separately, which is what [[promote]] does. **Do not `git push` unless the user asks.**
 
 ## Output format
 
 ```
 Saved. Log: logs/<date>-<slug>.md
 Freshness: <up to date | fast-forwarded from origin/main | BLOCKED — <script's reason>>
-hot.md <refreshed (<n> words / <budget> budget) | refresh SKIPPED (branch not fresh)> · log.md appended
+hot.md <refreshed (<n> words / <budget> budget) | refresh SKIPPED (branch not fresh) | write REFUSED — <script's reason>> · log.md appended
 Graph sync: <synced repos | not needed this session>
-Committed locally (not pushed). Open loops carried forward: <n>
+Commit: <committed <n> paths on '<branch>' (not pushed) | nothing to commit | REFUSED — <script's reason>>
+Open loops carried forward: <n>
 ```
 
 ## Notes
