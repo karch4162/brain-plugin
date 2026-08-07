@@ -1,0 +1,68 @@
+# .graphifyignore — C# / .NET (code graph carve-out)
+#
+# Copied into the repo checkout at build time from the VAULT-side copy at
+# graphify/<repo>/.graphifyignore, which is the reviewable, committed one.
+# PURE DENYLIST — never add a `!negation` line; negation is not available here.
+#
+# Scope for this stack is `src/`.
+
+# --- dependencies -----------------------------------------------------------
+packages/
+node_modules/
+vendor/
+
+# --- generated / build output ----------------------------------------------
+bin/
+obj/
+out/
+build/
+dist/
+coverage/
+TestResults/
+*.Designer.cs
+*.g.cs
+*.g.i.cs
+*.AssemblyInfo.cs
+Migrations/
+
+# --- build & config manifests ----------------------------------------------
+*.csproj
+*.sln
+*.props
+*.targets
+Directory.Build.*
+nuget.config
+appsettings*.json
+Dockerfile
+Dockerfile.*
+entrypoint.sh
+docker-compose*.yml
+.editorconfig
+.env
+.env.*
+
+# --- tests and test scaffolding --------------------------------------------
+test/
+tests/
+*Tests/
+*.Tests/
+*Test.cs
+*Tests.cs
+*.test.*
+*.spec.*
+
+# --- docs, images, media ---------------------------------------------------
+*.md
+docs/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ico
+
+# --- editor / CI -----------------------------------------------------------
+.github/
+.vs/
+.vscode/
+.idea/

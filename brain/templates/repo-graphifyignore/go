@@ -1,0 +1,62 @@
+# .graphifyignore — Go (code graph carve-out)
+#
+# Copied into the repo checkout at build time from the VAULT-side copy at
+# graphify/<repo>/.graphifyignore, which is the reviewable, committed one.
+# PURE DENYLIST — never add a `!negation` line; negation is not available here.
+#
+# Scope for this stack is the repo root minus this file — which is exactly what
+# the "workspace root minus the standard denylist" shape means everywhere else.
+
+# --- dependencies -----------------------------------------------------------
+vendor/
+third_party/
+node_modules/
+
+# --- generated / build output ----------------------------------------------
+bin/
+dist/
+build/
+out/
+coverage/
+*.pb.go
+*.pb.gw.go
+*_gen.go
+*_generated.go
+mock_*.go
+mocks/
+wire_gen.go
+
+# --- build & config manifests ----------------------------------------------
+go.mod
+go.sum
+Makefile
+Dockerfile
+Dockerfile.*
+entrypoint.sh
+docker-compose*.yml
+.golangci.yml
+.golangci.yaml
+.env
+.env.*
+
+# --- tests and test scaffolding --------------------------------------------
+test/
+tests/
+testdata/
+*_test.go
+*.test.*
+*.spec.*
+
+# --- docs, images, media ---------------------------------------------------
+*.md
+docs/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+
+# --- editor / CI -----------------------------------------------------------
+.github/
+.vscode/
+.idea/

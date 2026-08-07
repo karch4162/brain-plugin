@@ -1,0 +1,77 @@
+# .graphifyignore — Python (code graph carve-out)
+#
+# Copied into the repo checkout at build time from the VAULT-side copy at
+# graphify/<repo>/.graphifyignore, which is the reviewable, committed one.
+# PURE DENYLIST — never add a `!negation` line; negation is not available here.
+#
+# Scope for this stack is the importable package dir(s). Everything below is
+# what "the repo root minus the standard denylist" has to carve back.
+
+# --- environments & dependencies -------------------------------------------
+.venv/
+venv/
+env/
+.tox/
+.nox/
+site-packages/
+vendor/
+node_modules/
+
+# --- generated / build output ----------------------------------------------
+build/
+dist/
+out/
+coverage/
+htmlcov/
+*.egg-info/
+__pycache__/
+*.pyc
+*.pyo
+*_pb2.py
+*_pb2_grpc.py
+migrations/versions/
+
+# --- build & config manifests ----------------------------------------------
+setup.py
+setup.cfg
+pyproject.toml
+requirements*.txt
+Pipfile
+Pipfile.lock
+poetry.lock
+tox.ini
+.flake8
+.pylintrc
+mypy.ini
+Dockerfile
+Dockerfile.*
+entrypoint.sh
+docker-compose*.yml
+.env
+.env.*
+
+# --- tests and test scaffolding (BY NAME, not just test_*) -----------------
+test/
+tests/
+__tests__/
+conftest.py
+test_*.py
+*_test.py
+*.test.*
+*.spec.*
+
+# --- docs, images, media ---------------------------------------------------
+*.md
+*.rst
+docs/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.ipynb
+
+# --- editor / CI -----------------------------------------------------------
+.github/
+.vscode/
+.idea/

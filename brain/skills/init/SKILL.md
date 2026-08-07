@@ -114,7 +114,33 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
    Verify before moving on: run `node "${CLAUDE_PLUGIN_ROOT}/bin/freshness.mjs" --stdout` from the vault and confirm the "Unverifiable `source:` anchors" section is absent or small. A large one means `REPOS_DIR` is still wrong.
 
-6b. **Record the graph scope — predetermined per stack, the engineer never picks.** Detect this repo's stack and look up its source roots from the **"Graph scope" table** in the vault's `CLAUDE.md` (Flutter `lib/`; Next `app/ components/ lib/ src/`; React/Node `src/`; Python the importable package dir; Unity `Assets/Scripts/`; …). If the stack is unknown, ask the user **once** for the source roots. **Record them** in the vault `CLAUDE.md` "Repos this brain covers" table (the **Scope** column) for this repo — that's the authoritative, reproducible scope. The build itself happens in `/brain:save` at this recorded scope, code-only (AST) — so it's identical for every teammate and nobody is ever prompted to choose.
+6b. **Record the graph scope — predetermined per stack, the engineer never picks — and place the carve-out that implements it.** Detect this repo's stack and look up its source roots from the **"Graph scope" table** in the vault's `CLAUDE.md` (Flutter `lib/`; Next.js **workspace root minus the denylist**; React/Node `src/`; Python the importable package dir; Unity `Assets/Scripts/`; …). If the stack is unknown, ask the user **once** for the source roots.
+
+   **First, enumerate — do not write a scope row you have not checked against the repo (INNOV-268).** List the repo's top-level directories and confirm the scope you are about to record covers **every source-bearing one**:
+   ```bash
+   ls -d */ | sed 's#/##'
+   ```
+   For each directory that contains source files (`.ts .tsx .js .jsx .dart .py .go .cs .java .kt .rb .php .swift .rs .vue .svelte`) and is not deps/build output/tests/platform scaffolding, the recorded scope must include it. **If any source-bearing directory is not covered, widen the scope** (or, preferred for JS/TS, record "workspace root minus the standard denylist") and say so to the user.
+
+   > **Why this step is not optional.** The per-stack Next.js row used to read `app/ components/ lib/ src/`. A real frontend workspace also keeps application code in `constants/ hooks/ services/ types/ validation/ providers/`, so a graph built strictly to that row was **missing the service layer, the hooks and the validation schemas**. Out-of-scope junk is obvious to a human; **missing code is invisible** — the query returns nothing and looks like a correct answer, and `query`/`affected`/`path`/`blast-radius` all silently under-report. This one `ls` is what stands between the vault and a confidently empty answer.
+
+   **Then record it** in the vault `CLAUDE.md` "Repos this brain covers" table (the **Scope** column) for this repo — that's the authoritative, reproducible scope. The build itself happens in `/brain:save` at this recorded scope, code-only (AST) — so it's identical for every teammate and nobody is ever prompted to choose.
+
+   **Then place the per-stack carve-out**, which is the file that actually *implements* the scope (graphify scans one positional root, so a multi-root scope is always "scan the root, carve back with `.graphifyignore`"). It lives **vault-side and committed**, so a scope is reviewable and a build is reproducible:
+   ```bash
+   mkdir -p "<vault>/graphify/<repo>"
+   [ -f "<vault>/graphify/<repo>/.graphifyignore" ] || \
+     cp "${CLAUDE_PLUGIN_ROOT}/templates/repo-graphifyignore/<stack>" "<vault>/graphify/<repo>/.graphifyignore"
+   ```
+   `<stack>` is one of `nextjs react node-ts flutter python dotnet go unity`. **Never overwrite an existing carve-out** — it may carry repo-specific exclusions someone reviewed. Record its path in the table's **Carve-out** column. The build copies it into the repo checkout as `.graphifyignore`; it is never committed to the product repo.
+
+   > **This is a DIFFERENT file from the vault's own `.graphifyignore`** (`templates/graphifyignore`, placed at `<vault>/.graphifyignore` in step 5). That one keeps secrets, `chats/` and `logs/` out of the **wiki** concept graph. This one keeps build manifests, test scaffolding and generated code out of a **repo's code** graph. Do not merge them, and step 5(a)'s "leave `.graphifyignore` untouched" refers to the vault's, not this one.
+
+   **Verify the pair immediately after the first build** (step 7 or the next `/brain:save`) — the scope row and the carve-out are only as good as the graph they produce:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/bin/scope-audit.mjs" --mirror <repo> --repo-root <checkout>
+   ```
+   `SCOPE-AUDIT: OK` → done. `OUT-OF-SCOPE` → add the named patterns to the carve-out and rebuild. `MISSING-ROOTS` → the scope row is too narrow; widen it. **`SKIPPED` is not an OK** — it means a direction could not be checked (exit code 2), so fix the input and re-run rather than moving on. `bin/sync-graph.sh` runs the same audit and refuses to publish a mirror that fails it.
 
 7. **Offer to seed the brain now (the first build).** Scaffolding + wiring alone leaves the vault **empty** — no code-graph mirror, no wiki notes — so it's useless to the next `/brain:resume` or query until something builds. Don't make the user stumble into that via a later `/brain:save`; **offer it here**, explicitly, via `AskUserQuestion`:
    - **Seed now (recommend as the default):** run `/brain:save` immediately. With the scope recorded in 6b, save does the **first** build end-to-end — builds this repo's code graph at the recorded scope (full AST, keyless), syncs the mirror into `graphify/<repo>/`, ingests **all** of the repo's docs into the wiki (§15.6 first-ingest), builds the wiki concept graph (keyless, via the `/graphify` skill), and commits. Save now recognizes a scope-table repo with no graph yet as a first build, so this works on a fresh vault (it didn't before — that was the "stumbled-into via save" gap).

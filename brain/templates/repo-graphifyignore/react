@@ -1,0 +1,84 @@
+# .graphifyignore — React / JS SPA (code graph carve-out)
+#
+# Copied into the repo checkout at build time from the VAULT-side copy at
+# graphify/<repo>/.graphifyignore, which is the reviewable, committed one.
+# PURE DENYLIST — never add a `!negation` line; negation is not available here.
+#
+# Keep the manifest/test-scaffolding block in step with:
+#   node "${CLAUDE_PLUGIN_ROOT}/bin/scope-audit.mjs" --print-denylist
+
+# --- dependencies -----------------------------------------------------------
+node_modules/
+vendor/
+.yarn/
+.pnpm-store/
+
+# --- generated / build output ----------------------------------------------
+dist/
+build/
+out/
+coverage/
+.parcel-cache/
+storybook-static/
+*.min.js
+*.d.ts
+
+# --- build & config manifests ----------------------------------------------
+package.json
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+tsconfig*.json
+*.config.js
+*.config.ts
+*.config.mjs
+*.config.cjs
+.eslintrc*
+eslint.config.*
+components.json
+postcss.*
+tailwind.config.*
+babel.config.*
+.babelrc*
+Dockerfile
+Dockerfile.*
+entrypoint.sh
+.env
+.env.*
+
+# --- tests and test scaffolding (BY NAME, not just *.test.*) ---------------
+test/
+tests/
+__tests__/
+__mocks__/
+cypress/
+e2e/
+*.test.*
+*.spec.*
+jest.config.*
+jest.setup.*
+vitest.config.*
+vitest.setup.*
+setupTests.*
+*.stories.*
+
+# --- docs, images, media ---------------------------------------------------
+*.md
+*.mdx
+docs/
+public/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.webp
+*.ico
+*.css
+*.scss
+
+# --- editor / CI -----------------------------------------------------------
+.github/
+.husky/
+.vscode/
+.idea/
