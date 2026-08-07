@@ -86,6 +86,16 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    ```
 
 5. **Build repo graphs at the standard scope, then sync mirrors.** A *covered repo* is any repo that has a mirror folder under `graphify/<repo>/` **or** is listed in the vault `CLAUDE.md` "Repos this brain covers" table — the latter catches a freshly-`/brain:init`-ed repo whose **first** graph hasn't been built yet (this is the seed `/brain:init` offers; `/brain:save` is the one place builds actually run). Build a covered repo when its **source changed this session** *or* it has **no graph yet** (first build / seed):
+   - **Place the carve-out FIRST — the build is not reproducible without it (INNOV-267).** `graphify` scans a single positional root, so any scope wider than one directory is really "scan the root, carve back with `.graphifyignore`". That carve-out lives **vault-side and in version control** at `graphify/<repo>/.graphifyignore`, and must be copied into the repo checkout **before** the build reads it. Skip this and the build silently uses whatever stray `.graphifyignore` that machine happens to have — which is exactly how two people onboarding the same repo produced different graphs and the vault could not tell.
+     ```bash
+     # seed the vault-side carve-out from the per-stack template on first use (never overwrite an existing one)
+     mkdir -p "$BRAIN_ROOT/graphify/<repo>"
+     [ -f "$BRAIN_ROOT/graphify/<repo>/.graphifyignore" ] || \
+       cp "${CLAUDE_PLUGIN_ROOT}/templates/repo-graphifyignore/<stack>" "$BRAIN_ROOT/graphify/<repo>/.graphifyignore"
+     # copy it into the checkout the build is about to read
+     cp "$BRAIN_ROOT/graphify/<repo>/.graphifyignore" "$REPOS_DIR/<repo>/.graphifyignore"
+     ```
+     `<stack>` is one of `templates/repo-graphifyignore/` (`nextjs`, `react`, `node-ts`, `flutter`, `python`, `dotnet`, `go`, `unity`) — match the repo's Stack column in the vault `CLAUDE.md` table. The templates are **pure denylists**; never add a `!negation` line. If the carve-out is edited, it is edited **vault-side** and committed there — the copy in the checkout is a disposable build input, not the source of truth.
    - **Build at the recorded scope, code-only (AST), never prompt for scope.** Read the repo's scope from the vault `CLAUDE.md` "Repos this brain covers" table (e.g. `lib/`) and build over exactly those source roots. Do a **full build on the first run** (no `graphify-out/graph.json` in the repo yet) and an **incremental `--update`** every time after:
      ```bash
      ( cd "$REPOS_DIR/<repo>" && graphify <source-roots> )            # FIRST build (no graphify-out/ yet): full AST extraction, creates the graph
@@ -97,6 +107,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
      bash "${CLAUDE_PLUGIN_ROOT}/bin/sync-graph.sh"      # copies each repo's graphify-out → graphify/<repo>/ (creates the mirror on first sync)
      ```
    (Run from the vault root, or with `BRAIN_ROOT=<vault>` set. Sync is a no-op for unchanged repos and writes its own `log.md` line + commit.) Skip if no covered repo's source changed **and** every covered repo already has a graph.
+   - **The sync gates on a scope audit (INNOV-267/268) and can refuse.** `sync-graph.sh` runs `bin/scope-audit.mjs` on each mirror *before* copying, in both directions — nodes built from files the standard says are OUT, and source-bearing top-level dirs with **zero** nodes. A finding refuses **that mirror only** (nothing copied, the vault keeps the mirror it had), other mirrors still sync, and the run exits 1. **Do not work around a refusal** — it means the graph is wrong, and the second direction in particular means *code is missing from the graph*, which every downstream query will report as a confident empty answer. Fix the carve-out (vault-side) or the scope row, rebuild, re-run. A `SKIPPED` verdict is **not** an OK: it means the audit could not check, and the mirror published unaudited.
 
 5b. **Ingest changed repo docs into the wiki (§15.6 split) — incremental, the standard docs→wiki path (no separate command).** For each covered repo, check its `docs/` + `README` + top-level design docs for files changed since the last save. By type:
    - **Canonical / structured** (contracts, standards, machine-readable specs, "drift is a defect" docs): create/update a **link-note** in `wiki/<area>/` that *points at* the doc (`source:` anchor + provenance) and summarizes what it governs — **do not copy its values** into the note (that creates a fourth drift source).
