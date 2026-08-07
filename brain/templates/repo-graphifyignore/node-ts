@@ -1,0 +1,91 @@
+# .graphifyignore — Node / TypeScript backend (code graph carve-out)
+#
+# Copied into the repo checkout at build time from the VAULT-side copy at
+# graphify/<repo>/.graphifyignore, which is the reviewable, committed one.
+# PURE DENYLIST — never add a `!negation` line; negation is not available here.
+#
+# Scope for this stack is `src/` per package, which in a monorepo means "the
+# workspace root MINUS this file" — hub-packages keeps its source under
+# contracts/src, nest-common/src, nest-logger/src and a single positional root
+# cannot express that. 58% of that mirror's nodes were out of scope before this.
+#
+# Keep the manifest/test-scaffolding block in step with:
+#   node "${CLAUDE_PLUGIN_ROOT}/bin/scope-audit.mjs" --print-denylist
+
+# --- dependencies -----------------------------------------------------------
+node_modules/
+vendor/
+.venv/
+.yarn/
+.pnpm-store/
+
+# --- generated / build output ----------------------------------------------
+dist/
+build/
+out/
+lib-cov/
+coverage/
+.turbo/
+*.min.js
+*.d.ts
+*.generated.ts
+migrations/*.js
+
+# --- build & config manifests (NOT architecture, however they cluster) ------
+package.json
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+tsconfig*.json
+*.config.js
+*.config.ts
+*.config.mjs
+*.config.cjs
+.eslintrc*
+eslint.config.*
+components.json
+postcss.*
+tailwind.config.*
+next.config.*
+nest-cli.json
+Dockerfile
+Dockerfile.*
+entrypoint.sh
+docker-compose*.yml
+.env
+.env.*
+
+# --- tests and test scaffolding --------------------------------------------
+# BY NAME: *.test.* / *.spec.* does NOT match jest.setup.ts, jest.config.js or
+# vitest.config.ts. device-stats-gateway/jest.config.js was the single stray the
+# original audit found across nine mirrors — this line is that finding, fixed.
+test/
+tests/
+__tests__/
+__mocks__/
+e2e/
+*.test.*
+*.spec.*
+jest.config.*
+jest.setup.*
+vitest.config.*
+vitest.setup.*
+
+# --- docs, images, media (the wiki's job, not the code graph's) ------------
+*.md
+*.mdx
+docs/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.webp
+*.ico
+*.pdf
+
+# --- editor / CI -----------------------------------------------------------
+.github/
+.husky/
+.vscode/
+.idea/

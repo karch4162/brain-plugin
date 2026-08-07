@@ -1,0 +1,99 @@
+# .graphifyignore — Next.js / TypeScript app or workspace (code graph carve-out)
+#
+# Copied into the repo checkout at build time from the VAULT-side copy at
+# graphify/<repo>/.graphifyignore, which is the reviewable, committed one.
+# PURE DENYLIST — never add a `!negation` line; negation is not available here.
+#
+# The scope for this stack is "the workspace root MINUS this file". That is
+# deliberate (INNOV-268): the old prescription of `app/ components/ lib/ src/`
+# dropped constants/ hooks/ services/ types/ validation/ providers/ — real
+# application code — and missing code is invisible in every graph query.
+#
+# Keep the manifest/test-scaffolding block in step with:
+#   node "${CLAUDE_PLUGIN_ROOT}/bin/scope-audit.mjs" --print-denylist
+
+# --- dependencies -----------------------------------------------------------
+node_modules/
+vendor/
+.venv/
+.yarn/
+.pnpm-store/
+
+# --- generated / build output ----------------------------------------------
+dist/
+build/
+out/
+coverage/
+.next/
+.turbo/
+.vercel/
+storybook-static/
+*.min.js
+*.d.ts
+
+# --- build & config manifests (NOT architecture, however they cluster) ------
+# These are what produced community labels like "Contracts Jest Config" and
+# "Base ESLint Config" — build tooling wearing an architecture name.
+package.json
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+tsconfig*.json
+*.config.js
+*.config.ts
+*.config.mjs
+*.config.cjs
+.eslintrc*
+eslint.config.*
+components.json
+postcss.*
+tailwind.config.*
+next.config.*
+next-env.d.ts
+Dockerfile
+Dockerfile.*
+entrypoint.sh
+docker-compose*.yml
+.env
+.env.*
+
+# --- tests and test scaffolding --------------------------------------------
+# BY NAME, because *.test.* / *.spec.* does NOT match jest.setup.ts,
+# jest.config.js or vitest.config.ts — that gap is how test tooling got into
+# hub's graph while the pattern-based exclusions "looked complete".
+test/
+tests/
+__tests__/
+__mocks__/
+e2e/
+cypress/
+playwright/
+*.test.*
+*.spec.*
+jest.config.*
+jest.setup.*
+vitest.config.*
+vitest.setup.*
+playwright.config.*
+setupTests.*
+
+# --- docs, images, media (the wiki's job, not the code graph's) ------------
+*.md
+*.mdx
+docs/
+public/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.webp
+*.ico
+*.mp4
+*.pdf
+
+# --- editor / CI / platform scaffolding ------------------------------------
+.github/
+.husky/
+.vscode/
+.idea/

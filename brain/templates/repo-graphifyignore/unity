@@ -1,0 +1,74 @@
+# .graphifyignore — C# / Unity (code graph carve-out)
+#
+# Copied into the repo checkout at build time from the VAULT-side copy at
+# graphify/<repo>/.graphifyignore, which is the reviewable, committed one.
+# PURE DENYLIST — never add a `!negation` line; negation is not available here.
+#
+# Scope for this stack is `Assets/Scripts/`. Everything Unity generates around
+# it — Library/, Temp/, .meta sidecars, imported plugin source — is noise that
+# would otherwise dominate the graph.
+
+# --- Unity machine state (never source) ------------------------------------
+Library/
+Temp/
+Obj/
+obj/
+Bin/
+bin/
+Build/
+Builds/
+Logs/
+UserSettings/
+MemoryCaptures/
+Recordings/
+*.meta
+
+# --- imported / third-party --------------------------------------------------
+Assets/Plugins/
+Assets/ThirdParty/
+Assets/Standard Assets/
+Packages/
+node_modules/
+
+# --- generated ---------------------------------------------------------------
+*.Designer.cs
+*.g.cs
+Assets/Scripts/Generated/
+
+# --- build & config manifests ----------------------------------------------
+*.csproj
+*.sln
+*.unityproj
+ProjectSettings/
+manifest.json
+packages-lock.json
+Dockerfile
+Dockerfile.*
+entrypoint.sh
+.env
+.env.*
+
+# --- tests and test scaffolding --------------------------------------------
+Tests/
+test/
+tests/
+Assets/Tests/
+*Tests.cs
+*Test.cs
+*.test.*
+*.spec.*
+
+# --- assets, docs, media (not code) ----------------------------------------
+*.md
+docs/
+*.png
+*.jpg
+*.jpeg
+*.psd
+*.fbx
+*.prefab
+*.unity
+*.asset
+*.mat
+*.anim
+*.shader

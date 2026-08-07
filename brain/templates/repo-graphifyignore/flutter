@@ -1,0 +1,74 @@
+# .graphifyignore — Flutter / Dart (code graph carve-out)
+#
+# Copied into the repo checkout at build time from the VAULT-side copy at
+# graphify/<repo>/.graphifyignore, which is the reviewable, committed one.
+# PURE DENYLIST — never add a `!negation` line; negation is not available here.
+#
+# Scope for this stack is `lib/`. This file is what makes that reproducible when
+# the build runs from the repo root, and it is also the reason a generated
+# *.g.dart never shows up as a "model" community.
+
+# --- dependencies & tool state ---------------------------------------------
+.dart_tool/
+.pub-cache/
+.pub/
+packages/
+build/
+
+# --- generated code (the single biggest source of fake structure here) -----
+*.g.dart
+*.freezed.dart
+*.gr.dart
+*.config.dart
+*.mocks.dart
+*.pb.dart
+*.pbenum.dart
+*.pbjson.dart
+*.pbserver.dart
+l10n/generated/
+generated_plugin_registrant.dart
+
+# --- platform scaffolding (native shells, not app architecture) ------------
+ios/
+android/
+macos/
+windows/
+linux/
+web/
+
+# --- build & config manifests ----------------------------------------------
+pubspec.yaml
+pubspec.lock
+analysis_options.yaml
+Dockerfile
+Dockerfile.*
+entrypoint.sh
+.env
+.env.*
+
+# --- tests and test scaffolding --------------------------------------------
+test/
+tests/
+test_driver/
+integration_test/
+*_test.dart
+*.test.*
+*.spec.*
+
+# --- docs, images, media ---------------------------------------------------
+*.md
+docs/
+assets/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.webp
+*.json
+*.arb
+
+# --- editor / CI -----------------------------------------------------------
+.github/
+.vscode/
+.idea/

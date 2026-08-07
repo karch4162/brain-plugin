@@ -40,16 +40,36 @@ Scope is fixed **per stack**, never an engineer's per-run choice — otherwise t
 | Stack | Source roots (IN) |
 |---|---|
 | Flutter / Dart | `lib/` |
-| Next.js / TS | `app/` `components/` `lib/` `src/` (whichever exist) |
+| Next.js / TS | **the workspace root minus the standard denylist** — i.e. *every* source-bearing top-level dir, not a fixed list. `app/ components/ lib/ src/` **and** `constants/ hooks/ services/ types/ validation/ providers/` and anything else the repo actually keeps code in |
 | React / JS | `src/` |
-| Node / TS backend | `src/` |
+| Node / TS backend | `src/` per package (in a monorepo: every `*/src`, i.e. workspace root minus the denylist) |
 | Python | the importable package dir(s) |
 | C# / Unity | `Assets/Scripts/` |
 | C# / .NET | `src/` |
 | Go | repo root, minus `vendor/` + `*_test.go` |
 | Unknown | the human picks **once** at `/brain:init`, recorded in the repo table below — never re-asked |
 
-**Always OUT of the code graph:** tests (`test/ tests/ __tests__/ *.test.* *.spec.* *_test.*`); generated/build (`build/ dist/ .next/ .dart_tool/ out/ coverage/ *.g.dart *.freezed.dart`); deps (`node_modules/ vendor/ packages/ .venv/`); platform scaffolding (`ios/ android/ macos/ windows/ linux/ web/`); and **docs/images/video** (the wiki's job, below).
+> **Why the Next.js row is a subtraction, not a list (INNOV-268).** It used to prescribe `app/ components/ lib/ src/`. A real frontend workspace also keeps genuine application code in `constants/ hooks/ services/ types/ validation/ providers/`, so a graph built strictly to that row was **missing the service layer, the hooks and the validation schemas**. That is worse than junk nodes, not better: junk is obvious (a community called "Base ESLint Config" tells a human something is wrong), while **missing code is invisible** — "what calls this service" returns nothing and looks like a correct answer, and `query`/`affected`/`path`/`blast-radius` all silently under-report. When in doubt, scope wider and let the denylist carve back.
+
+### The carve-out — where a scope actually lives
+
+graphify scans **one** positional root, so *any* multi-root scope is really "scan the root, carve back with `.graphifyignore`". That file therefore **is** the scope, and it lives in version control:
+
+- **Vault-side, committed, reviewable:** `graphify/<repo>/.graphifyignore`, seeded by `/brain:init` from the plugin's `templates/repo-graphifyignore/<stack>`.
+- **Copied into the repo checkout as `.graphifyignore` at build time**, used for that build, and never committed to the product repo.
+- **Pure denylist — never write a `!negation` line.** Negation is not available on this path, so a `!` line is not the escape hatch it looks like.
+
+This is not bookkeeping. While the carve-out was a machine-local, git-excluded file, no one could review a scope, no one could reproduce a build, and two people onboarding the same repo produced different graphs with the vault unable to tell. Mirrors that audited clean did so because their author's hand-written ignore file happened to be complete — luck wearing the costume of a standard.
+
+**Always OUT of the code graph — the mechanically enforced set.** These are checked by `bin/scope-audit.mjs`, which `bin/sync-graph.sh` runs before publishing any mirror; a finding **refuses the publish**. Print the authoritative list with `node "${CLAUDE_PLUGIN_ROOT}/bin/scope-audit.mjs" --print-denylist` — this table must not drift from it:
+
+- **build & config manifests:** `package.json` `package-lock.json` `tsconfig*.json` `*.config.js` `*.config.ts` `*.config.mjs` `*.config.cjs` `.eslintrc*` `eslint.config.*` `components.json` `postcss.*` `tailwind.config.*` `next.config.*` `Dockerfile` `entrypoint.sh`
+- **test scaffolding, by name:** `jest.config.*` `jest.setup.*` `vitest.config.*` — note a `*.test.*`/`*.spec.*` pattern does **not** match any of these, which is exactly how build tooling got into a mirror whose exclusions "looked complete"
+- **tests:** `test/ tests/ __tests__/ __mocks__/ e2e/ cypress/ playwright/ integration_test/ test_driver/ *.test.* *.spec.* *_test.* *_spec.*` — the `*_test.*` suffix form is enforced separately from the dotted one, because Go's `handler_test.go` and Dart's `app_test.dart` match no `*.test.*` pattern
+- **generated / build output:** `dist/ build/ out/ coverage/ .next/ .dart_tool/ *.g.dart *.freezed.dart`
+- **deps:** `node_modules/ vendor/ .venv/` — note `packages/` is deliberately *not* denied: it is a real monorepo source directory, and denying it would erase an entire repo's source.
+
+**Also out, by scope choice rather than by the audit:** platform scaffolding (`ios/ android/ macos/ windows/ linux/`) and **docs/images/video** (the wiki's job, below). These live in the per-stack carve-out; they are not in the audit's hard denylist because `web/` and friends are genuine source directories in some repos.
 
 **Tests are OUT (v1)** — they pollute structural queries (test files reference everything) and the *contracts* they pin are captured better in the wiki, with the *why*. Revisit with a separate coverage pass only if "which test pins this rule" becomes a real need.
 
@@ -91,13 +111,19 @@ Scope is fixed **per stack**, never an engineer's per-run choice — otherwise t
 
 ## Repos this brain covers
 
-The **Scope** column is the recorded code-graph scope for each repo (set by `/brain:init` from the per-stack table above) — authoritative, so builds are identical for everyone.
+The **Scope** column is the recorded code-graph scope for each repo (set by `/brain:init` from the per-stack table above) — authoritative, so builds are identical for everyone. The **Carve-out** column is the committed file that *implements* that scope; a scope row with no carve-out is a statement nothing enforces.
 
-| Area | Repo | Stack | Scope (code-graph roots) | Graph |
-|---|---|---|---|---|
-| {{area}} | `{{path/to/repo}}` | {{stack}} | `{{source roots, e.g. lib/}}` | `graphify/{{repo}}/graph.json` |
+| Area | Repo | Stack | Scope (code-graph roots) | Carve-out | Graph |
+|---|---|---|---|---|---|
+| {{area}} | `{{path/to/repo}}` | {{stack}} | `{{source roots, e.g. lib/}}` | `graphify/{{repo}}/.graphifyignore` | `graphify/{{repo}}/graph.json` |
 
-Sync all mirrors at once with the plugin's `bin/sync-graph.sh` (run with `BRAIN_ROOT` set to this vault).
+Sync all mirrors at once with the plugin's `bin/sync-graph.sh` (run with `BRAIN_ROOT` set to this vault). The sync **audits before it publishes**: `bin/scope-audit.mjs` checks each graph in both directions — out-of-scope nodes, *and* source-bearing directories with zero nodes — and a finding refuses that mirror's publish, naming the offending files and the remedy. Audit one by hand with:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/scope-audit.mjs" --mirror <repo> --repo-root <checkout>
+```
+
+Its first line is `SCOPE-AUDIT: OK | OUT-OF-SCOPE | MISSING-ROOTS | SKIPPED`. **`SKIPPED` is never an `OK`** — it means one of the two directions could not be determined (usually a missing `--repo-root`), and it carries its own exit code (2) so it cannot be mistaken for a pass.
 
 ## Git conventions
 

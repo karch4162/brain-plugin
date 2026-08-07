@@ -41,6 +41,15 @@
 # the existing report is KEPT and the sync says so on stderr. graph.json and
 # manifest.json still mirror.
 #
+# SCOPE AUDIT (INNOV-267/268): before a mirror is published, its graph is checked
+# against the standard scope by bin/scope-audit.mjs, in BOTH directions — nodes
+# built from files that must be OUT (build/config manifests, test scaffolding,
+# deps, generated output), and source-bearing top-level directories with ZERO
+# nodes. A finding REFUSES that mirror's copy, names the offending files and the
+# remedy, and makes the run exit 1; other mirrors still sync and still commit.
+# The rule the audit enforces is the one the vault records, so it is finally a
+# mechanism rather than a paragraph — everything enforced by prose drifts.
+#
 # COMMITTING IS NOT THIS SCRIPT'S JOB (INNOV-275). Every guard that used to live
 # here — open-PR, protected branch, HEAD pin — now lives in bin/vault-commit.sh,
 # the single commit path shared with /brain:save. This script captures the HEAD
@@ -161,6 +170,60 @@ label_guard_verdict() { # existing_report incoming_report
   return 0
 }
 
+# --- THE SCOPE GATE (INNOV-267 + INNOV-268) ---------------------------------
+#
+# The vault records a SCOPE per repo but nothing implemented it. graphify scans
+# ONE positional root, so a multi-root scope is really "scan the root, carve back
+# with .graphifyignore" — and that carve-out used to be git-excluded, so it
+# existed only on the machine that built the graph. The mirrors that audited
+# clean did so because their authors' unreviewable ignore files happened to be
+# complete. bin/scope-audit.mjs is the mechanism that check was standing in for.
+#
+# WHY THIS GUARD'S POLARITY IS THE OPPOSITE OF THE LABEL GUARD'S, three lines up.
+# The label guard FAILS CLOSED — "cannot tell" means "do not copy" — because an
+# overwritten labeled report is UNRECOVERABLE: the human naming work is simply
+# gone. An unaudited publish is not like that. It is recoverable (re-audit and
+# re-sync at any time), it is the status quo every existing mirror was built
+# under, and refusing every mirror whose graph predates this check would break
+# working vaults to enforce a rule they have never been given the chance to meet.
+# So:
+#   OUT-OF-SCOPE / MISSING-ROOTS  → REFUSE this mirror. The audit positively
+#                                   established that the graph is wrong.
+#   SKIPPED / unparsable verdict  → LOUD WARNING, publish proceeds. The audit
+#                                   established nothing, and says so.
+# What is NOT negotiable either way is the naming: SKIPPED is never printed or
+# treated as OK (INNOV-277/279). "We could not check" and "we checked and it is
+# fine" are different sentences, and a run that conflates them tells the reader
+# to stop looking.
+SCOPE_AUDIT="$SCRIPT_DIR/scope-audit.mjs"
+
+# Runs the audit for one mirror. Sets SCOPE_VERDICT (OK | OUT-OF-SCOPE |
+# MISSING-ROOTS | SKIPPED | UNKNOWN) and SCOPE_OUTPUT (the full report).
+# UNKNOWN covers every way the answer can be uninterpretable — node missing, the
+# module gone, a first line we do not recognise, or a first line whose verdict
+# disagrees with the exit status. It is deliberately NOT collapsed into SKIPPED:
+# SKIPPED is the auditor's own honest "I could not determine this", UNKNOWN is
+# "the auditor did not answer at all", and the stderr text differs accordingly.
+# Always returns 0 so `set -e` cannot turn a report into an aborted sync.
+scope_audit() { # graph_path repo_root name
+  local graph="${1:-}" root="${2:-}" nm="${3:-}" rc=0 first=""
+  SCOPE_VERDICT="UNKNOWN"
+  SCOPE_OUTPUT="$(node "$SCOPE_AUDIT" --graph "$graph" --repo-root "$root" --name "$nm" 2>&1)" || rc=$?
+  first="${SCOPE_OUTPUT%%$'\n'*}"
+  case "$first" in
+    "SCOPE-AUDIT: OK"*)            SCOPE_VERDICT="OK" ;;
+    "SCOPE-AUDIT: OUT-OF-SCOPE"*)  SCOPE_VERDICT="OUT-OF-SCOPE" ;;
+    "SCOPE-AUDIT: MISSING-ROOTS"*) SCOPE_VERDICT="MISSING-ROOTS" ;;
+    "SCOPE-AUDIT: SKIPPED"*)       SCOPE_VERDICT="SKIPPED" ;;
+  esac
+  # The prefix and the exit status must agree, or we did not understand the answer.
+  case "$SCOPE_VERDICT:$rc" in
+    OK:0|OUT-OF-SCOPE:1|MISSING-ROOTS:1|SKIPPED:2) ;;
+    *) SCOPE_VERDICT="UNKNOWN" ;;
+  esac
+  return 0
+}
+
 # True when the repo-side graph at $1 exists and differs from the mirrored copy
 # at $2 — the same `cmp -s` test the sync loop uses to decide "up-to-date".
 mirror_is_stale() {
@@ -193,6 +256,7 @@ if [[ ${#repos[@]} -eq 0 ]]; then
 fi
 
 synced=()
+refused=()
 for repo in "${repos[@]}"; do
   name="$(basename "$repo")"
   src="$repo/graphify-out"
@@ -206,6 +270,44 @@ for repo in "${repos[@]}"; do
     echo "up-to-date: $name"
     continue
   fi
+
+  # THE SCOPE GATE. Runs BEFORE the first copy, so a refusal leaves the vault
+  # exactly as it found it — the mirror it already had is still the mirror it
+  # has, and nothing half-published is left behind for the next reader to trust.
+  scope_audit "$src/graph.json" "$repo" "$name"
+  case "$SCOPE_VERDICT" in
+    OUT-OF-SCOPE|MISSING-ROOTS)
+      {
+        echo "REFUSED $name: its graph does not match the recorded scope, so it was NOT published."
+        printf '%s\n' "$SCOPE_OUTPUT"
+        echo "  Nothing was copied for $name and no log line was written; the vault keeps the"
+        echo "  mirror it already had. Fix the carve-out or the scope row, rebuild the graph,"
+        echo "  then re-run this sync."
+      } >&2
+      refused+=("$name")
+      continue
+      ;;
+    SKIPPED)
+      {
+        echo "warn: scope audit could not be determined for $name — publishing anyway, unaudited."
+        printf '%s\n' "$SCOPE_OUTPUT"
+        echo "  This is NOT a clean audit. Rebuild the graph (or fix the checkout path) so the"
+        echo "  next sync can actually check it."
+      } >&2
+      ;;
+    OK)
+      printf '%s\n' "${SCOPE_OUTPUT%%$'\n'*}" >&2
+      ;;
+    *)
+      {
+        echo "warn: the scope audit did not answer for $name (node and/or $SCOPE_AUDIT) — publishing anyway, unaudited."
+        [[ -n "$SCOPE_OUTPUT" ]] && printf '  %s\n' "${SCOPE_OUTPUT%%$'\n'*}"
+        echo "  Unlike the label guard this does not fail closed: an unaudited publish is"
+        echo "  recoverable, an overwritten labeled report is not. But it is not an OK either."
+        echo "  Fix the auditor, then re-run to get a real verdict."
+      } >&2
+      ;;
+  esac
 
   mkdir -p "$dst"
   cp "$src/graph.json" "$dst/graph.json"
@@ -298,4 +400,12 @@ if [[ ${#synced[@]} -gt 0 && $COMMIT -eq 1 ]]; then
     echo "Mirrors synced (files written, commit refused above): ${synced[*]}" >&2
     exit 1
   fi
+fi
+
+# A scope refusal is a failed run even when everything else committed cleanly:
+# the graph the vault was asked to publish is wrong, and exiting 0 would let
+# /brain:save report a successful sync over a mirror that was never written.
+if [[ ${#refused[@]} -gt 0 ]]; then
+  echo "scope audit REFUSED ${#refused[@]} mirror(s): ${refused[*]} (see the reports above)" >&2
+  exit 1
 fi
