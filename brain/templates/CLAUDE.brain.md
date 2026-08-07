@@ -120,9 +120,42 @@ Sync all mirrors at once with the plugin's `bin/sync-graph.sh` (run with `BRAIN_
   discard each other with no merge conflict — the only unrecoverable loss in this vault. Write the new
   version to a temp file and install it via `bin/write-hot.sh --pin` / `--write`, which refuses if the
   file moved underneath you.
-- Running two sessions against this vault at once is not safe on its own: `HEAD` and the git index are
-  **global to the checkout**, so one session's `checkout` or merge silently changes the branch the other
-  believes it is on. The guards above make that detectable rather than damaging. For genuinely parallel
-  work, give each session its own `git worktree` — that removes the shared `HEAD` and shared index at
-  the root instead of papering over them.
+- Every brain command that writes opens a **session record** first (`bin/session.sh --start <command>`,
+  `--end` when it finishes); `/brain:resume` only reads it with `--status`. It lives in the gitignored
+  `.brain/` — never commit it — and it is what lets one command warn that another is live. See
+  "Parallel sessions" below.
 - `graph.json` is regenerated, never hand-edited; the graphify merge driver handles parallel commits.
+
+## Parallel sessions — one git worktree each
+
+**Recommended, not required.**
+
+Two sessions in one checkout share `HEAD` and the git index — both are **global to the checkout**, not
+per-session — so one session's `checkout` or merge silently changes the branch the other believes it is
+on, and one session's `git add` lands in the other's commit. A **separate working tree per session
+removes both at the root** instead of papering over them.
+
+It also converts the vault's only unrecoverable loss into something git can show you. `wiki/hot.md` is a
+**whole-file rewrite**: two sessions rewriting it in one tree produce **no conflict at all** — the later
+write wins and the earlier content is simply gone. Across two worktrees the same overlap comes back as a
+real, visible **merge conflict** that a human resolves. Same for a wiki note edited from both sides.
+
+```bash
+# one worktree per parallel session, each on its own branch
+git worktree add ../vault-<purpose> -b brain/<purpose>
+
+# when that line of work has landed
+git worktree remove ../vault-<purpose>
+```
+
+Point that session's `BRAIN_ROOT` at the worktree path, not the original checkout.
+
+Each worktree gets its **own `.brain/`** — it is gitignored working-tree state, not shared history — and
+therefore its own session record and its own `hot.md` pin. That is the point: the isolation is real
+rather than cooperative.
+
+Why it is an upgrade, not a prerequisite: the single guarded commit path (`bin/vault-commit.sh`, which
+verifies the whole index against `.saveinclude`), `bin/write-hot.sh`'s compare-and-swap on `hot.md`, and
+the session record together make single-tree concurrency **safe** — a collision is refused, not silently
+applied. A worktree buys fewer refusals and real conflict resolution, not the difference between safe
+and unsafe.

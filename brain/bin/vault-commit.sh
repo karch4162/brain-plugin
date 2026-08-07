@@ -109,6 +109,18 @@ set -uo pipefail
 
 VAULT="${BRAIN_ROOT:-${CLAUDE_PROJECT_DIR:-$PWD}}"
 
+# detect_default_branch() and branch_is_protected() live in lib/branch.sh, shared
+# verbatim with bin/session.sh — which applies the same protected-branch rule at
+# command START, so the work happens on a working branch from the first file write
+# instead of being discovered here an hour of edits later. Two copies of this rule
+# would be the INNOV-274 defect: a start-time check and a commit-time check that
+# disagree about "protected" means a command that starts somewhere it can never
+# commit from. The path is resolved from this script's own location, so it works
+# from any cwd. The lib reads $VAULT, which is why it is sourced after it is set.
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/branch.sh
+. "$BIN_DIR/lib/branch.sh"
+
 MESSAGE=""
 PIN=""
 FORCE_COMMIT=0
@@ -291,48 +303,14 @@ if [[ -n "$PIN" ]]; then
   fi
 fi
 
-# Prints the vault repo's default branch name, or nothing when it cannot be
-# determined. Tried in order, first hit wins:
-#   (a) the local origin/HEAD symbolic ref (works offline, no gh needed),
-#   (b) `gh repo view --json defaultBranchRef` when gh exists and is authed.
-# EVERY method degrades silently to "unknown" — an error, a missing tool or a
-# vault with no remote must never be reported as a branch name. The literal
-# main/master fallback lives in branch_is_protected(), not here, because it is a
-# safety net rather than a detection result.
-detect_default_branch() {
-  local ref db
-  ref="$(git -C "$VAULT" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"
-  ref="${ref#origin/}"
-  ref="${ref//[[:space:]]/}"
-  if [[ -n "$ref" ]]; then echo "$ref"; return 0; fi
-  if command -v gh >/dev/null 2>&1; then
-    # gh has no -C; run it from inside the vault so it resolves that repo's remote.
-    db="$(cd "$VAULT" 2>/dev/null && gh repo view --json defaultBranchRef \
-          --jq '.defaultBranchRef.name' 2>/dev/null || true)"
-    db="${db//[[:space:]]/}"
-    if [[ -n "$db" ]]; then echo "$db"; return 0; fi
-  fi
-  return 0
-}
-
-# True when branch $1 must never receive an automatic commit: it is the detected
-# default branch, or (safety net, always on) literally main/master.
-branch_is_protected() {
-  local branch="${1:-}" default
-  [[ -n "$branch" && "$branch" != "HEAD" ]] || return 1
-  default="$(detect_default_branch)"
-  if [[ -n "$default" && "$branch" == "$default" ]]; then return 0; fi
-  # A vault with no remote and no gh must STILL refuse to auto-commit onto
-  # main/master. This one deliberately does not degrade to "not protected".
-  if [[ "$branch" == "main" || "$branch" == "master" ]]; then return 0; fi
-  return 1
-}
-
+# branch_is_protected() comes from lib/branch.sh, sourced at the top.
 if branch_is_protected "$CUR_BRANCH"; then
   refuse "'$CUR_BRANCH' is the protected/default branch" \
     "  Nothing was staged and nothing was committed." \
     "  Create a working branch first, then re-run:" \
     "    git -C \"$VAULT\" checkout -b brain/<what-this-is>" \
+    "  Or start the command through bin/session.sh --start, which picks a working" \
+    "  branch up front so this never comes up at commit time." \
     "  There is no flag to override this. If you genuinely mean to commit straight" \
     "  onto '$CUR_BRANCH', do it with git by hand — that is a human decision, not" \
     "  something the tooling should offer."

@@ -11,7 +11,15 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 
 ## What to do when invoked
 
-0. **Check branch freshness before touching `wiki/hot.md`.** Step 3 **rewrites** hot.md, so a stale base silently reverts whatever anyone else landed on it. Don't reason about this — run the guard, which brings the branch up to date on its own when that's safe:
+0a. **Open a session record — this runs before anything else, including step 0b.** On the vault's protected/default branch `--start` **creates the working branch**, so it has to run before a single file is written or reasoned about: step 0b tells you whether *this* branch is current, and that reasoning is worthless if you are about to be moved onto a different branch. It also publishes the fact that this session is live, so a concurrent brain command can see you.
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --start save   # from the vault root, or with BRAIN_ROOT=<vault> set
+   ```
+   - **Exit `0`, first line `SESSION: OK` →** the session is recorded and you are on a working branch. A second line, `  pin: <branch>:<sha>`, is printed — **keep it exactly as written; step 6 passes it back.** Go on to step 0b.
+   - **Exit `0`, first line `SESSION: WARN` →** proceed, but **another session is live against this vault.** Relay the script's `SESSION: WARN` line to the user **verbatim** — it names the other session's branch and pid; do not paraphrase or re-derive it — and carry it into the output block. The `pin:` line is printed the same way; step 6 will refuse if that other session moves HEAD underneath you, which is the point.
+   - **Exit `1`, first line `SESSION: REFUSED` →** **stop the whole command here.** No log, no hot.md rewrite, no commit. Relay the script's `SESSION: REFUSED` line to the user **verbatim** — it names the reason and the remedy — and **do not work around it with a raw `git checkout` / `git switch` / `git branch`.** The branch state it refused on is the thing being protected; getting onto a working branch by hand is the same defect as committing by hand in step 6.
+
+0b. **Check branch freshness before touching `wiki/hot.md`.** Step 3 **rewrites** hot.md, so a stale base silently reverts whatever anyone else landed on it. Don't reason about this — run the guard, which brings the branch up to date on its own when that's safe:
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/bin/check-freshness.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
    ```
@@ -47,7 +55,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    Be honest in "Pending" — this is what `/brain:resume` surfaces next time. Don't claim things are done that aren't.
 
 3. **Refresh `wiki/hot.md` — rewrite, never append.** This is a *rolling cache*, not a log; the session history already lives in `logs/` (step 2), so nothing is lost by deleting from here. Concretely:
-   - **First: `git status --porcelain wiki/hot.md`.** Uncommitted edits here are about to be overwritten by the rewrite and are **not recoverable** — step 0's guard only catches the committed kind. If the file is dirty, show `git diff wiki/hot.md` and ask before continuing; if it's this session's own work in progress, continue.
+   - **First: `git status --porcelain wiki/hot.md`.** Uncommitted edits here are about to be overwritten by the rewrite and are **not recoverable** — step 0b's guard only catches the committed kind. If the file is dirty, show `git diff wiki/hot.md` and ask before continuing; if it's this session's own work in progress, continue.
    - **Then pin the file, before you read it**, and do the rewrite through the guard. Two overlapping sessions each rewrite hot.md wholesale and the later one silently discards the earlier — with no merge conflict, because both wrote a whole file. That is the vault's **only unrecoverable loss**, so the check is mechanical and you do not do it by hand:
      ```bash
      bash "${CLAUDE_PLUGIN_ROOT}/bin/write-hot.sh" --pin        # BEFORE reading hot.md
@@ -116,19 +124,27 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 
 6. **Commit through `vault-commit.sh` — never with raw git.** This is the step that, run by hand, put a commit straight onto a protected `main` on 2026-08-05 while `sync-graph.sh`'s own guards refused one command earlier. **Do not run `git add` or `git commit` against the vault, ever** — not "just this once", not with `--force`, not because the script refused. One command does the whole step:
    ```bash
-   bash "${CLAUDE_PLUGIN_ROOT}/bin/vault-commit.sh" -m "save: <date> session — <slug>"
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/vault-commit.sh" -m "save: <date> session — <slug>" --pin "<branch>:<sha>"
    ```
+   `<branch>:<sha>` is the `pin:` value step 0a printed, passed through unchanged — **a pin makes vault-commit refuse if another session moved HEAD mid-run, which is the second half of the 2026-08-05 incident.** Don't re-derive it with `git rev-parse`: the whole value of a pin is that it is what *you* saw at the start, not what is true now. If you no longer have step 0a's output, `bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --print-pin` reprints this session's recorded pin.
    - **Exit `0` (`VAULT-COMMIT: OK`) →** committed (or there was nothing to commit — the line says which). Quote it in the output block.
    - **Exit `1` (`VAULT-COMMIT: REFUSED`) →** **nothing was staged and nothing was committed.** Relay the script's `VAULT-COMMIT: REFUSED` line and its remedy to the user **verbatim** — it names the branch, the offending paths and the fix; do not paraphrase, do not re-derive it, and **do not work around it with raw git**. Finish the rest of the save and report the commit as refused.
 
-   What it enforces, so you don't have to reason about any of it: it refuses on the **protected/default branch** (no override — create a branch first), refuses on a branch with an **open PR** (`--force-commit` overrides that one only), refuses if the vault's **HEAD moved** mid-run, stages **only** `.saveinclude` paths, and then **verifies the whole index** against the allowlist and refuses if a concurrent session staged anything else.
+   What it enforces, so you don't have to reason about any of it: it refuses on the **protected/default branch** (no override — create a branch first), refuses on a branch with an **open PR** (`--force-commit` overrides that one only), refuses if the vault's **HEAD moved** mid-run — that last one is now actually armed, because step 0a's `pin:` is supplied above; without a `--pin` the script has nothing to compare against — stages **only** `.saveinclude` paths, and then **verifies the whole index** against the allowlist and refuses if a concurrent session staged anything else.
 
    **`.saveinclude` is the permission model** — one path/glob per line, `#` comments and blanks ignored. The default allowlist covers `logs/`, `wiki/hot.md`, `wiki/log.md`, the `graphify-out/` wiki-graph artifacts and the `graphify/` repo mirrors. **Customize what may be committed by editing `.saveinclude`** — add a path to allow it, leave a path off to keep it local/manual; `bash "${CLAUDE_PLUGIN_ROOT}/bin/vault-commit.sh" --print-allowlist` shows the resolved list. Private content — harvested `chats/` (also gitignored) or anything off the list — is never published by accident. **Trusted `wiki/` notes are intentionally not allowlisted**: knowledge changes go via PR, staged separately, which is what [[promote]] does. **Do not `git push` unless the user asks.**
+
+7. **Close the session record.** Once step 6 has reported (committed, nothing-to-commit, or refused), the save is over — clear the record so it doesn't linger and make the next command warn about a session that ended:
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --end   # from the vault root, or with BRAIN_ROOT=<vault> set
+   ```
+   A lingering record only costs a spurious `SESSION: WARN` next time, so this is tidiness rather than a guard — but run it anyway, including on the paths where step 0b blocked or step 6 refused.
 
 ## Output format
 
 ```
 Saved. Log: logs/<date>-<slug>.md
+Session: <started on '<branch>' | WARN — <script's line>>
 Freshness: <up to date | fast-forwarded from origin/main | BLOCKED — <script's reason>>
 hot.md <refreshed (<n> words / <budget> budget) | refresh SKIPPED (branch not fresh) | write REFUSED — <script's reason>> · log.md appended
 Graph sync: <synced repos | not needed this session>

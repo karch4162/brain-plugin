@@ -21,6 +21,14 @@ bin/harvest-chats.mjs   →  chats/<repo>/*.md (status: raw)
 
 ## What to do when invoked
 
+0. **Open a session record — first, before any file work.** On the vault's protected/default branch `--start` **creates the working branch**, so it must run before anything is written: this skill writes draft notes and flips digest frontmatter, and a branch change made later would invalidate everything that preceded it. It also publishes the fact that this session is live, so a concurrent brain command can see you.
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --start wiki-ingest   # from the vault root, or with BRAIN_ROOT=<vault> set
+   ```
+   - **Exit `0`, first line `SESSION: OK` →** recorded, and you are on a working branch. Go on to step 1.
+   - **Exit `0`, first line `SESSION: WARN` →** proceed, but **another session is live against this vault.** Relay the script's `SESSION: WARN` line to the user **verbatim** — it names the other session's branch and pid; do not paraphrase or re-derive it.
+   - **Exit `1`, first line `SESSION: REFUSED` →** **stop here and change nothing.** Relay the script's `SESSION: REFUSED` line to the user **verbatim** — it names the reason and the remedy — and **do not work around it with a raw `git checkout` / `git switch`.** The branch state it refused on is exactly what the guard is protecting.
+
 1. **Find un-ingested digests.** Look in `chats/` for files with `status: raw` in frontmatter (skip `status: ingested`). If the user named a specific file/repo, scope to that. If `chats/` is empty, tell them to run `node "${CLAUDE_PLUGIN_ROOT}/bin/harvest-chats.mjs"` first.
 
 2. **Read the digest(s)** and extract only **durable, reusable facts** — the kind that belong in the brain:
@@ -44,6 +52,12 @@ bin/harvest-chats.mjs   →  chats/<repo>/*.md (status: raw)
 4. **Mark the digest ingested.** Flip its frontmatter `status: raw` → `status: ingested` so the next run skips it.
 
 5. **Report** a promotion queue: list the draft notes created, each with a one-line "promote / merge into [[existing]] / drop" recommendation. Do **not** move drafts into trusted areas yourself — hand the queue to `/brain:promote`, the reviewed PR step.
+
+6. **Close the session record** so it doesn't linger into the next command:
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --end   # from the vault root, or with BRAIN_ROOT=<vault> set
+   ```
+   Run it on the "nothing to ingest" path too. A stale record only costs a spurious `SESSION: WARN` next time, but tidiness is cheap.
 
 ## Notes
 

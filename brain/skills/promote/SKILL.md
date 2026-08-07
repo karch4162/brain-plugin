@@ -17,6 +17,18 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).
 
 ## What to do when invoked
 
+### 0. Open a session record — first, before any file work
+
+On the vault's protected/default branch `--start` **creates the working branch**, so it must run before anything is read or written: step 5 branches, moves files and opens a PR, and a branch change made later would invalidate every triage decision that preceded it. It also publishes the fact that this session is live, so a concurrent brain command can see you.
+
+```bash
+bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --start promote   # from the vault root, or with BRAIN_ROOT=<vault> set
+```
+
+- **Exit `0`, first line `SESSION: OK` →** recorded, and you are on a working branch. Go on to step 1.
+- **Exit `0`, first line `SESSION: WARN` →** proceed, but **another session is live against this vault.** Relay the script's `SESSION: WARN` line to the user **verbatim** — it names the other session's branch and pid; do not paraphrase or re-derive it. It is the in-checkout twin of step 1b's open-PR check: same collision risk, closer to home.
+- **Exit `1`, first line `SESSION: REFUSED` →** **stop here and change nothing** — no triage, no moves, no PR. Relay the script's `SESSION: REFUSED` line to the user **verbatim** — it names the reason and the remedy — and **do not work around it with a raw `git checkout` / `git switch`.** The branch state it refused on is exactly what the guard is protecting.
+
 ### 1. List the queue
 
 Optional arg = one draft name or `all` (default: all). For each `wiki/_drafts/*.md`, show a one-line triage row: name, one-sentence gist, `confidence`, **age in days** (from frontmatter date or file mtime), and a duplicate check against `wiki/index.md` and existing trusted notes (same topic → likely **merge**, not keep).
@@ -84,7 +96,8 @@ No arguments checks every note in `wiki/_drafts/`. Pass the keepers explicitly w
 1. Branch in the vault repo (e.g. `promote/drafts-<date>`).
 2. Commit the moves, index lines, and merge edits. Dropped drafts are deleted in the same branch.
 3. Open a PR per the vault's convention. PR body: table of promoted notes (draft → target), merges, drops with reasons, and any still-pending drafts with what blocks them.
-4. Report the same summary to the user, plus the new `_drafts/` count (goal: zero or a short, young queue) and step 3's `ANCHORS:` verdict line with its counts — including how many promoted notes went out with an anchor that could not be verified here, and on whose say-so.
+4. **Close the session record** — `bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --end` (from the vault root, or with `BRAIN_ROOT=<vault>` set). Run it on early exits too (empty queue, no decisions, a step 1b blocker). A lingering record only costs a spurious `SESSION: WARN` next time, but tidiness is cheap.
+5. Report the same summary to the user, plus the new `_drafts/` count (goal: zero or a short, young queue) and step 3's `ANCHORS:` verdict line with its counts — including how many promoted notes went out with an anchor that could not be verified here, and on whose say-so.
 
 ## Notes
 

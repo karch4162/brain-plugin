@@ -20,6 +20,14 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).
 
 ## What to do when invoked
 
+0. **Open a session record — first, before any file work.** On the vault's protected/default branch `--start` **creates the working branch**, so it must run before anything is written: a branch change made later would invalidate every read and every write that preceded it. It also publishes the fact that this session is live, so a concurrent brain command can see you.
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --start label   # from the vault root, or with BRAIN_ROOT=<vault> set
+   ```
+   - **Exit `0`, first line `SESSION: OK` →** recorded, and you are on a working branch. Go on to step 1.
+   - **Exit `0`, first line `SESSION: WARN` →** proceed, but **another session is live against this vault.** Relay the script's `SESSION: WARN` line to the user **verbatim** — it names the other session's branch and pid; do not paraphrase or re-derive it.
+   - **Exit `1`, first line `SESSION: REFUSED` →** **stop here and change nothing.** Relay the script's `SESSION: REFUSED` line to the user **verbatim** — it names the reason and the remedy — and **do not work around it with a raw `git checkout` / `git switch`.** The branch state it refused on is exactly what the guard is protecting.
+
 1. **Get the work order** (from the vault root, or with `BRAIN_ROOT=<vault>` set):
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/bin/label-communities.mjs" --digest [repo ...]
@@ -49,6 +57,12 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).
 6. **Offer to commit** (ask first — vault governance): `git -C <vault> add graphify/<repo>` plus a `wiki/log.md` line, e.g.
    `- <date> — <repo> communities labeled vault-side via /brain:label (N named, M derived, K preserved).`
    Mirror the commit style of `sync-graph.sh` (`Label communities: <repos>`); push is left to the user.
+
+7. **Close the session record** so it doesn't linger into the next command:
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --end   # from the vault root, or with BRAIN_ROOT=<vault> set
+   ```
+   A stale record only costs a spurious `SESSION: WARN` next time, but tidiness is cheap — run it on the "already labeled, nothing to do" path too.
 
 ## Notes
 

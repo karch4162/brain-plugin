@@ -38,6 +38,18 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
 > **Path handling — do this for EVERY path you persist.** Normalize paths to **OS-native absolute form** before writing them to the registry *or* `.claude/settings.json`, and use the **same** form in both files. On Windows, convert a git-bash `/c/Users/...` to `C:/Users/...` (forward slashes are fine for Node); resolve `~` and relative paths to absolute up front. **Why it matters:** the registry and settings must agree, because a later re-init that reads `registry.repos_dir` back into a settings `REPOS_DIR` would otherwise persist a git-bash path — and `path.resolve('/c/Users/...')` on Windows resolves to `C:\c\Users\...`, which breaks harvest's project-dir encoding (and any script that joins `REPOS_DIR`). When in doubt, mirror the OS-native style the user's `BRAIN_ROOT` ends up in.
 
+0. **Open a session record against the vault — first, before any file work in it.** On the vault's protected/default branch `--start` **creates the working branch**, so it must run before anything is written into the vault; a branch change made afterwards would invalidate everything that preceded it. **When to run it depends on which init this is:**
+   - **Re-init / this project already resolves a `BRAIN_ROOT`** (an existing wired project pointing at a registered vault): run it **now, before step 1.**
+   - **First init, no vault chosen yet:** you cannot record a session against a vault that does not exist. Run it **the moment the vault path is known and is a git repo** — i.e. immediately after step 5 — and before step 6 writes anything. Case 5(b)'s brand-new `git init`ed vault is the one place this is a formality: there is no other session and no protected branch yet.
+   ```bash
+   BRAIN_ROOT=<vault> bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --start init
+   ```
+   - **Exit `0`, first line `SESSION: OK` →** recorded, and you are on a working branch. Carry on.
+   - **Exit `0`, first line `SESSION: WARN` →** proceed, but **another session is live against that vault.** Relay the script's `SESSION: WARN` line to the user **verbatim** — it names the other session's branch and pid; do not paraphrase or re-derive it. It matters here: init can scaffold governance files, and a concurrent save is committing.
+   - **Exit `1`, first line `SESSION: REFUSED` →** **stop here and change nothing in the vault.** Relay the script's `SESSION: REFUSED` line to the user **verbatim** — it names the reason and the remedy — and **do not work around it with a raw `git checkout` / `git switch`.** The branch state it refused on is exactly what the guard is protecting.
+
+   When init finishes — including when step 7 hands off to `/brain:save`, which opens and closes its own record — close yours: `BRAIN_ROOT=<vault> bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --end`. A lingering record only costs a spurious `SESSION: WARN` next time, but tidiness is cheap.
+
 1. **Ensure graphify is installed at the pinned version** (delegated — the brain does not vendor it, POC §16.1). **Pin** (`==0.8.46`) rather than floating latest: graphify's skill auto-runs `uv tool install --upgrade`, and on Windows a mid-upgrade venv rebuild can leave a reparse-point/locked file that breaks the launcher in a loop (see `/brain:doctor`). A fixed version means import stays healthy and the auto-upgrade never fires.
    ```bash
    command -v graphify || uv tool install graphifyy==0.8.46
@@ -111,6 +123,28 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
    Call this out as a real choice because the first build can take a few minutes on a large repo (the docs-ingest dispatches subagents). Don't auto-run it silently.
 
 8. **Verify, then confirm.** Setup isn't done until it's *checked* — run the `/brain:doctor` check table (all checks, no repairs unless something is ❌; offer the matching repair if so) so the user leaves init with a green bill of health instead of an assumption. Then print: the chosen vault (name + path), its governance profile, that `BRAIN_ROOT`/`REPOS_DIR` are wired (machine-local), the recorded graph scope, and **whether the brain was seeded just now or is still empty pending `/brain:save`**. If seeded, the vault is ready to `/brain:resume` and query; if deferred, the next step is `/brain:save`. **Do not run raw `/graphify` on the repo** — it would ask you to pick a scope, which the brain has already standardized away.
+
+## Running more than one session at once — use a git worktree
+
+**Recommended, not required.** Mention it at step 8 if the user works in parallel sessions; don't gate init on it.
+
+A vault checkout has exactly one `HEAD` and one git index, and both are **global to the checkout** — not per-session. Two agents in the same directory therefore share the branch they think they are on and the staging area they think they own: one session's `git checkout` or merge silently relocates the other, and one session's `git add` shows up in the other's commit. A **separate working tree per session removes both at the root** rather than detecting them after the fact.
+
+It also converts the one loss the vault cannot recover. `wiki/hot.md` is a **whole-file rewrite**, so two sessions rewriting it in one tree produce **no merge conflict** — the later write simply wins and the earlier session's content is gone. Across two worktrees the same overlap comes back through git as a real, visible **conflict** on merge, which a human resolves. Same for a wiki note edited from both sides.
+
+```bash
+# one worktree per parallel session, each on its own branch
+git -C <vault> worktree add ../vault-<purpose> -b brain/<purpose>
+
+# when that line of work has landed
+git -C <vault> worktree remove ../vault-<purpose>
+```
+
+Point the session's `BRAIN_ROOT` at the worktree path (`../vault-<purpose>`), not the original checkout — the same step 6 / 6a wiring, one `settings.local.json` per tree.
+
+Each worktree gets its **own `.brain/`** (it is gitignored working-tree state, not shared history), so each has its own session record and its own `wiki/hot.md` pin. **That is the point**: the isolation is real rather than cooperative, and `session.sh --status` in one tree correctly reports no contention because there genuinely is none.
+
+Why it is an upgrade and not a prerequisite: `bin/vault-commit.sh` (one guarded commit path, index verified against the allowlist), `bin/write-hot.sh`'s compare-and-swap on `hot.md`, and the session record together make single-tree concurrency **safe** — collisions are refused rather than silently applied. A worktree buys you *fewer refusals and real conflict resolution*, not the difference between safe and unsafe.
 
 ## Notes
 
