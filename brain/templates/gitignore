@@ -9,8 +9,11 @@ graphify-out/.graphify_*
 .graphify_root
 .graphify_python
 
-# Machine-local state about in-flight brain commands (the wiki/hot.md pin that
-# bin/write-hot.sh compares against). Per-checkout and per-session — never shared.
+# Machine-local state about in-flight brain commands: the wiki/hot.md pin that
+# bin/write-hot.sh compares against, and the session record bin/session.sh writes
+# (--start / --status / --end). Per-checkout and per-session — never shared, and
+# deliberately NOT in .saveinclude, so no command can commit it. A git worktree
+# gets its own .brain/, which is what makes parallel sessions genuinely isolated.
 .brain/
 
 # OS / editor
