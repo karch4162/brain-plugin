@@ -240,6 +240,29 @@ if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith
     process.exit(0);
   }
 
+  // --print-paths: `name<TAB>path`, one line per resolved repo. Exists so shell
+  // callers (bin/sync-graph.sh) can consume the alias map without a JSON parser.
+  //
+  // Paths are emitted with FORWARD SLASHES. repos.local.json stores native
+  // Windows paths (`C:\Users\...`), and `[[ -f "C:\Users\...\graph.json" ]]` in
+  // Git Bash silently fails — the backslashes are eaten as escapes. Converting
+  // once here beats getting it right in every consumer.
+  //
+  // A vault with no repos.json prints NOTHING and exits 0, deliberately: to a
+  // shell caller "this vault has no aliases" and "this vault has none I can
+  // resolve" are the same instruction — fall back to the flat layout. Only the
+  // JSON mode below treats a missing repos.json as an error, because there a
+  // human is asking a question and deserves the answer.
+  if (argv.includes('--print-paths')) {
+    const r = resolveRepos(vault, roots);
+    if (write && r.cacheChanged) writeCache(vault, r.cache);
+    for (const [name, p] of r.paths) {
+      if (name.includes('\t') || name.includes('\n')) continue; // never emit a line that cannot be parsed
+      console.log(`${name}\t${String(p).replace(/\\/g, '/')}`);
+    }
+    process.exit(0);
+  }
+
   const r = resolveRepos(vault, roots);
   if (!r.identity) {
     console.log(JSON.stringify({ error: 'no repos.json in vault — run with --seed first' }, null, 2));

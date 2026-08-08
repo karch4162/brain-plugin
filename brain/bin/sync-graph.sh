@@ -22,8 +22,13 @@
 # --no-commit and --force-commit are given, --no-commit wins.
 #
 # DEFAULT SCOPE (no repo args): each folder name under <vault>/graphify/ is
-# resolved to a checkout at $REPOS_DIR/<name> (default: the vault's parent dir),
-# but only mirrors that are actually STALE are selected — i.e. the repo-side
+# resolved to a checkout via the vault's repos.json/repos.local.json alias map,
+# falling back to $REPOS_DIR/<name> (default: the vault's parent dir) when the
+# vault has no map or the name is not in it. The alias map is what lets a mirror
+# live somewhere other than a same-named directory one level down — `store-hub`
+# is the repo cloned as `edge/`, `KDS` is a directory inside the monorepo clone.
+# Explicit args may be a checkout path OR a bare mirror name.
+# Only mirrors that are actually STALE are selected — i.e. the repo-side
 # graphify-out/graph.json exists AND differs byte-for-byte from the mirrored
 # copy in the vault. Mirrors nobody rebuilt this session are left alone (an
 # unscoped run once degraded an untouched mirror's labels). The selected list is
@@ -101,6 +106,68 @@ fi
 # makes the later comparison a no-op.
 HEAD_BRANCH_AT_START="$(git -C "$VAULT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 HEAD_SHA_AT_START="$(git -C "$VAULT" rev-parse HEAD 2>/dev/null || true)"
+
+# --- the alias map: mirror name → checkout, from repos.json -------------------
+#
+# `$REPOS_DIR/<mirror-name>` assumes every covered repo is a directory sitting
+# directly under one shared parent, with a folder name equal to its mirror name.
+# Neither half holds:
+#
+#   store-hub  is the repo vendsy/edge, cloned as `edge/`      — name ≠ folder
+#   KDS        is monorepo/android/applications/KDS            — not a direct child
+#   hub-*      are hub/frontend, hub/services/core-service, …  — both at once
+#
+# tray-brain's `store-hub` mirror has been unsyncable for exactly this reason:
+# the mirror exists, `$REPOS_DIR/store-hub` does not, so the flat lookup finds
+# no source graph and silently skips it. A mirror that can never sync looks
+# identical to a mirror nobody rebuilt.
+#
+# repos.json (identity: name → remote + subPath) and repos.local.json (this
+# machine's absolute paths) already solve this for the anchor/freshness path.
+# This just teaches the sync to read the same map. REPOS_DIR stays as the
+# fallback and the discovery hint, so a vault with no repos.json behaves exactly
+# as before — that is the compatibility contract, and the test suite pins it.
+declare -A REPO_ALIAS=()
+if command -v node >/dev/null 2>&1 && [[ -f "$SCRIPT_DIR/resolve-repos.mjs" ]]; then
+  while IFS=$'\t' read -r _alias_name _alias_path; do
+    [[ -n "$_alias_name" && -n "$_alias_path" ]] || continue
+    REPO_ALIAS["$_alias_name"]="$_alias_path"
+  done < <(node "$SCRIPT_DIR/resolve-repos.mjs" --vault "$VAULT" --repos-dir "$REPOS_DIR" --print-paths 2>/dev/null || true)
+fi
+
+# Where mirror <name>'s source checkout lives: the alias map if it knows, else
+# the flat layout. Never fails — an unknown name yields the old guess, and the
+# caller's existing "no graph at ..." skip still covers a wrong one.
+repo_path_for() { # mirror_name
+  local n="$1"
+  if [[ -n "${REPO_ALIAS[$n]:-}" ]]; then printf '%s\n' "${REPO_ALIAS[$n]}"; else printf '%s\n' "$REPOS_DIR/$n"; fi
+}
+
+# The inverse, for explicit `sync-graph.sh <path>` arguments: which mirror does
+# this checkout publish to? Falls back to basename, which is what it always was.
+# Windows makes this fiddly — repos.local.json holds `C:\Users\...` while a user
+# types `/c/Users/...` or a forward-slash form — so both sides are normalized to
+# lowercase forward-slash with no trailing slash before comparing.
+#
+# String comparison alone is not enough. repos.local.json stores NATIVE paths
+# (`C:\Users\...\hub\frontend`) while the same directory reaches this script as
+# `/c/Users/.../hub/frontend` under Git Bash — different strings, one directory.
+# So when a path exists, canonicalize it by actually entering it and asking the
+# shell where it is; that renders both forms in the shell's own vocabulary. The
+# string fold is kept as the fallback for paths that no longer exist.
+_norm_path() {
+  local p="$1" real
+  if [[ -d "$p" ]] && real="$( (cd "$p" 2>/dev/null && pwd -P) )" && [[ -n "$real" ]]; then p="$real"; fi
+  printf '%s' "$p" | tr '\\' '/' | tr '[:upper:]' '[:lower:]' | sed 's#/*$##'
+}
+mirror_name_for() { # repo_path
+  local want; want="$(_norm_path "$1")"
+  local k
+  for k in "${!REPO_ALIAS[@]}"; do
+    if [[ "$(_norm_path "${REPO_ALIAS[$k]}")" == "$want" ]]; then printf '%s\n' "$k"; return 0; fi
+  done
+  basename "$1"
+}
 
 COMMIT=1
 FORCE_COMMIT=0
@@ -233,7 +300,15 @@ mirror_is_stale() {
   ! cmp -s "$src_graph" "$dst_graph"
 }
 
-repos=("$@")
+# Explicit arguments may be a checkout PATH (as always) or, now that the alias
+# map is loaded, a bare MIRROR NAME — `sync-graph.sh hub-frontend`. The name form
+# is unambiguous and is how anyone who has read the scope table will reach for
+# it; a path that happens to equal an alias name would have to be a bare
+# relative dir in $PWD, so the name wins only when no such directory exists.
+repos=()
+for a in "$@"; do
+  if [[ -n "${REPO_ALIAS[$a]:-}" && ! -d "$a" ]]; then repos+=("${REPO_ALIAS[$a]}"); else repos+=("$a"); fi
+done
 if [[ ${#repos[@]} -eq 0 ]]; then
   # DEFAULT SCOPE: never "every mirror". Only mirrors whose source graph actually
   # differs from the mirrored copy — an unscoped run must not touch a repo nobody
@@ -243,8 +318,13 @@ if [[ ${#repos[@]} -eq 0 ]]; then
   for d in "$VAULT"/graphify/*/; do
     [[ -d "$d" ]] || continue
     n="$(basename "$d")"
-    if [[ $SYNC_ALL -eq 1 ]] || mirror_is_stale "$REPOS_DIR/$n/graphify-out/graph.json" "$VAULT/graphify/$n/graph.json"; then
-      repos+=("$REPOS_DIR/$n")
+    # Resolve through the alias map, so a mirror whose checkout is not
+    # $REPOS_DIR/<name> is still found. Staleness must be judged on the RESOLVED
+    # path — comparing against a path that cannot exist always reads "not stale",
+    # which is how store-hub went quietly unsynced.
+    src_repo="$(repo_path_for "$n")"
+    if [[ $SYNC_ALL -eq 1 ]] || mirror_is_stale "$src_repo/graphify-out/graph.json" "$VAULT/graphify/$n/graph.json"; then
+      repos+=("$src_repo")
       selected+=("$n")
     fi
   done
@@ -258,7 +338,10 @@ fi
 synced=()
 refused=()
 for repo in "${repos[@]}"; do
-  name="$(basename "$repo")"
+  # The mirror this checkout publishes to. basename is right whenever the folder
+  # name IS the canonical name; the alias map is what makes hub/frontend publish
+  # to hub-frontend rather than to a bare, collision-prone `frontend`.
+  name="$(mirror_name_for "$repo")"
   src="$repo/graphify-out"
   dst="$VAULT/graphify/$name"
 
