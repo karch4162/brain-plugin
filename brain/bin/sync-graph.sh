@@ -127,20 +127,39 @@ HEAD_SHA_AT_START="$(git -C "$VAULT" rev-parse HEAD 2>/dev/null || true)"
 # This just teaches the sync to read the same map. REPOS_DIR stays as the
 # fallback and the discovery hint, so a vault with no repos.json behaves exactly
 # as before — that is the compatibility contract, and the test suite pins it.
-declare -A REPO_ALIAS=()
+# Parallel indexed arrays instead of an associative array so macOS system
+# bash (3.2) can run this (INNOV-284). NAMES[i] maps to PATHS[i].
+REPO_ALIAS_NAMES=()
+REPO_ALIAS_PATHS=()
 if command -v node >/dev/null 2>&1 && [[ -f "$SCRIPT_DIR/resolve-repos.mjs" ]]; then
   while IFS=$'\t' read -r _alias_name _alias_path; do
     [[ -n "$_alias_name" && -n "$_alias_path" ]] || continue
-    REPO_ALIAS["$_alias_name"]="$_alias_path"
+    REPO_ALIAS_NAMES+=("$_alias_name")
+    REPO_ALIAS_PATHS+=("$_alias_path")
   done < <(node "$SCRIPT_DIR/resolve-repos.mjs" --vault "$VAULT" --repos-dir "$REPOS_DIR" --print-paths 2>/dev/null || true)
 fi
+
+# Linear scan over the alias map: echoes the path for <name>, or nothing.
+# Always returns 0 so callers under `set -e` can capture freely.
+_alias_path_for() { # mirror_name
+  local _i=0
+  while [[ $_i -lt ${#REPO_ALIAS_NAMES[@]} ]]; do
+    if [[ "${REPO_ALIAS_NAMES[$_i]}" == "$1" ]]; then
+      printf '%s\n' "${REPO_ALIAS_PATHS[$_i]}"
+      return 0
+    fi
+    _i=$((_i + 1))
+  done
+  return 0
+}
 
 # Where mirror <name>'s source checkout lives: the alias map if it knows, else
 # the flat layout. Never fails — an unknown name yields the old guess, and the
 # caller's existing "no graph at ..." skip still covers a wrong one.
 repo_path_for() { # mirror_name
-  local n="$1"
-  if [[ -n "${REPO_ALIAS[$n]:-}" ]]; then printf '%s\n' "${REPO_ALIAS[$n]}"; else printf '%s\n' "$REPOS_DIR/$n"; fi
+  local n="$1" p
+  p="$(_alias_path_for "$n")"
+  if [[ -n "$p" ]]; then printf '%s\n' "$p"; else printf '%s\n' "$REPOS_DIR/$n"; fi
 }
 
 # The inverse, for explicit `sync-graph.sh <path>` arguments: which mirror does
@@ -162,9 +181,10 @@ _norm_path() {
 }
 mirror_name_for() { # repo_path
   local want; want="$(_norm_path "$1")"
-  local k
-  for k in "${!REPO_ALIAS[@]}"; do
-    if [[ "$(_norm_path "${REPO_ALIAS[$k]}")" == "$want" ]]; then printf '%s\n' "$k"; return 0; fi
+  local i=0
+  while [[ $i -lt ${#REPO_ALIAS_NAMES[@]} ]]; do
+    if [[ "$(_norm_path "${REPO_ALIAS_PATHS[$i]}")" == "$want" ]]; then printf '%s\n' "${REPO_ALIAS_NAMES[$i]}"; return 0; fi
+    i=$((i + 1))
   done
   basename "$1"
 }
@@ -307,7 +327,8 @@ mirror_is_stale() {
 # relative dir in $PWD, so the name wins only when no such directory exists.
 repos=()
 for a in "$@"; do
-  if [[ -n "${REPO_ALIAS[$a]:-}" && ! -d "$a" ]]; then repos+=("${REPO_ALIAS[$a]}"); else repos+=("$a"); fi
+  _p="$(_alias_path_for "$a")"
+  if [[ -n "$_p" && ! -d "$a" ]]; then repos+=("$_p"); else repos+=("$a"); fi
 done
 if [[ ${#repos[@]} -eq 0 ]]; then
   # DEFAULT SCOPE: never "every mirror". Only mirrors whose source graph actually

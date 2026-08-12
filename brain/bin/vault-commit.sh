@@ -380,7 +380,10 @@ done
 # already have staged something the allowlist forbids — another session, an
 # aborted merge, a human's `git add -A`. Step 5's discipline only governs step 5;
 # this check governs the commit. It is the one that makes the guarantee real.
-mapfile -t STAGED < <(git -C "$VAULT" diff --cached --name-only 2>/dev/null)
+STAGED=()
+while IFS= read -r _line; do
+  [ -n "$_line" ] && STAGED+=("$_line")
+done < <(git -C "$VAULT" diff --cached --name-only 2>/dev/null)
 
 if [[ ${#STAGED[@]} -eq 0 ]]; then
   if [[ $staged_any -eq 0 ]]; then
