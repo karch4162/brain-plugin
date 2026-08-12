@@ -273,16 +273,45 @@ mkdir -p "$NOISY_NODE"
 printf '#!/usr/bin/env bash\necho "totally fine, carry on"\nexit 0\n' >"$NOISY_NODE/node"
 chmod +x "$NOISY_NODE/node"
 
-# $PATH with every directory that contains a `<prog>` executable removed.
+# $PATH with exactly one program made unreachable, and nothing else lost.
+#
+# Dropping every PATH directory that holds <prog> is only safe when <prog> has a
+# directory to itself. On Windows `gh` does; on Linux it lives in /usr/bin next
+# to bash and git, so the strip takes the shell with it and the case dies with
+# `bash: command not found` before it can test anything. That failed only off
+# the author's machine, which is the false-green shape this suite exists to
+# catch.
+#
+# So: keep the directories that never held <prog>, and replace the ones that did
+# with a shim of `exec` wrappers for everything they contained except <prog>.
+# Wrappers are plain files — no symlinks, which MSYS turns into copies unless
+# winsymlinks is set, i.e. the same environment-dependent behaviour again.
+# Memoized per prog: the shim is built once per suite run, not once per case.
 path_without_prog() { # prog
-  local prog="$1" out="" d
+  local prog="$1" out="" built=0 d f base shim
+  # Separate statement on purpose: bash expands every word of a `local` before
+  # it assigns any of them, so "$TMPROOT/noprog-$prog" on the line above would
+  # interpolate an empty prog — one shared shim for every caller, and whichever
+  # one ran first would memoize the others out of building their own.
+  shim="$TMPROOT/noprog-$prog"
+  [[ -d "$shim" ]] && built=1 || mkdir -p "$shim"
   local IFS=:
   for d in $PATH; do
-    [[ -n "$d" ]] || continue
-    [[ -e "$d/$prog" || -e "$d/$prog.exe" || -e "$d/$prog.cmd" || -e "$d/$prog.bat" ]] && continue
-    out="${out:+$out:}$d"
+    [[ -n "$d" && -d "$d" ]] || continue
+    if [[ -e "$d/$prog" || -e "$d/$prog.exe" || -e "$d/$prog.cmd" || -e "$d/$prog.bat" ]]; then
+      ((built)) && continue
+      for f in "$d"/*; do
+        base="${f##*/}"
+        case "$base" in "$prog" | "$prog".*) continue ;; esac
+        [[ -f "$f" && -x "$f" && ! -e "$shim/$base" ]] || continue
+        printf '#!/bin/sh\nexec "%s" "$@"\n' "$f" >"$shim/$base"
+      done
+    else
+      out="${out:+$out:}$d"
+    fi
   done
-  printf '%s' "$out"
+  ((built)) || chmod +x "$shim"/* 2>/dev/null
+  printf '%s' "${out:+$out:}$shim"
 }
 
 # Creates a fresh isolated sandbox and echoes its path. Runs inside a command
