@@ -288,7 +288,12 @@ chmod +x "$NOISY_NODE/node"
 # winsymlinks is set, i.e. the same environment-dependent behaviour again.
 # Memoized per prog: the shim is built once per suite run, not once per case.
 path_without_prog() { # prog
-  local prog="$1" shim="$TMPROOT/noprog-$prog" out="" built=0 d f base
+  local prog="$1" out="" built=0 d f base shim
+  # Separate statement on purpose: bash expands every word of a `local` before
+  # it assigns any of them, so "$TMPROOT/noprog-$prog" on the line above would
+  # interpolate an empty prog — one shared shim for every caller, and whichever
+  # one ran first would memoize the others out of building their own.
+  shim="$TMPROOT/noprog-$prog"
   [[ -d "$shim" ]] && built=1 || mkdir -p "$shim"
   local IFS=:
   for d in $PATH; do
