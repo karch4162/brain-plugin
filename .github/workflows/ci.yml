@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Suites create scratch git repos; some rely on an ambient identity.
+      - name: Configure git identity
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@example.invalid"
+
+      - name: Run test suites
+        run: |
+          failed=()
+          for suite in tests/test-*.sh; do
+            echo "::group::$suite"
+            if bash "$suite"; then
+              echo "PASS $suite"
+            else
+              echo "FAIL $suite"
+              failed+=("$suite")
+            fi
+            echo "::endgroup::"
+          done
+          if [ ${#failed[@]} -gt 0 ]; then
+            printf 'failed suites:\n'
+            printf '  %s\n' "${failed[@]}"
+            exit 1
+          fi
