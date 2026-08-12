@@ -33,10 +33,13 @@
 # Both were stale on the machine this was written on, which is why the fix is
 # TWO commands in order, and why running only the second does nothing at all.
 #
-# WHAT THIS SCRIPT DOES NOT DO: it never reaches the network. Comparing the
-# clone against its own remote would need a fetch, and a health check must work
-# offline. So (a) is reported as an ADVISORY based on the clone's age, while (b)
-# — the one that is checkable locally and exactly — is reported as a hard drift.
+# NETWORK: OPPORTUNISTIC, NEVER REQUIRED. (a) is only exactly checkable with a
+# fetch, so when the clone is a git repo with an origin remote we ATTEMPT one —
+# quiet, no auth prompts, hard ~5s timeout. If it succeeds we compare the clone
+# against origin for real (STALE-CLONE below). If it fails, times out, or the
+# clone is not a git repo, we degrade to the old behavior — the clone-age
+# ADVISORY — and the OK line SAYS the remote was not checked. Being offline is
+# never an error; (b) stays checkable locally and exactly, as a hard drift.
 #
 # Usage:
 #   bash check-plugin-version.sh                   # check the brain plugin
@@ -45,10 +48,14 @@
 #
 # Contract (the /brain:doctor skill and its tests depend on exactly this):
 #   exit 0  => installed matches the marketplace clone (or the check was skipped)
-#   exit 1  => DRIFTED — the installed copy is not what the clone offers
+#   exit 1  => DRIFTED — the installed copy is not what the clone offers — or
+#              STALE-CLONE — install == clone, but a successful fetch proved the
+#              clone itself is behind its remote
 # The FIRST line of output always starts with "PLUGIN-VERSION: OK" (stdout),
-# "PLUGIN-VERSION: DRIFTED" (stderr) or "PLUGIN-VERSION: SKIPPED" (stdout), so a
-# caller can branch on it without parsing prose.
+# "PLUGIN-VERSION: DRIFTED" (stderr), "PLUGIN-VERSION: STALE-CLONE" (stderr) or
+# "PLUGIN-VERSION: SKIPPED" (stdout), so a caller can branch on it without
+# parsing prose. The OK line always states what was actually compared: either
+# "(clone current with remote)" or "(remote not checked: <reason>; ...)".
 #
 # SKIPPED IS NOT OK, AND IS NEVER SILENT. A machine with no marketplace, no
 # install record, or an unreadable cache reports SKIPPED and says which input was
@@ -189,9 +196,100 @@ if [[ -n "$CLONE_UPDATED" ]]; then
   fi
 fi
 
+# --- 2b. opportunistic fetch: is the clone behind its REMOTE? ---------------
+# Only attempted when the clone is a git repo with an origin remote. A fetch
+# failure or timeout is NEVER an error — it degrades to the age advisory above,
+# and the OK line says the remote was not checked. GIT_TERMINAL_PROMPT=0 so a
+# credential prompt can never hang a health check; the timeout is a background
+# job + poll loop because timeout(1) is not guaranteed on Git Bash/macOS and
+# `wait -n` is bash 4.3+.
+FETCH_STATE="not-attempted"   # ok | failed | timeout | no-git-repo | not-attempted
+BEHIND=""
+if [[ "$SOURCE_DESC" == "marketplace clone" && -n "$CLONE_DIR" ]]; then
+  if git -C "$CLONE_DIR" rev-parse --git-dir >/dev/null 2>&1 \
+     && git -C "$CLONE_DIR" remote get-url origin >/dev/null 2>&1; then
+    GIT_TERMINAL_PROMPT=0 git -C "$CLONE_DIR" fetch origin --quiet >/dev/null 2>&1 &
+    fetch_pid=$!
+    tick=0
+    while kill -0 "$fetch_pid" 2>/dev/null && [[ $tick -lt 25 ]]; do
+      tick=$((tick + 1)); sleep 0.2
+    done
+    if kill -0 "$fetch_pid" 2>/dev/null; then
+      kill "$fetch_pid" 2>/dev/null
+      wait "$fetch_pid" 2>/dev/null
+      FETCH_STATE="timeout"
+    elif wait "$fetch_pid" 2>/dev/null; then
+      FETCH_STATE="ok"
+    else
+      FETCH_STATE="failed"
+    fi
+    if [[ "$FETCH_STATE" == "ok" ]]; then
+      upstream=""
+      for ref in origin/HEAD origin/main origin/master; do
+        if git -C "$CLONE_DIR" rev-parse --verify --quiet "$ref" >/dev/null 2>&1; then
+          upstream="$ref"; break
+        fi
+      done
+      if [[ -n "$upstream" ]]; then
+        BEHIND="$(git -C "$CLONE_DIR" rev-list --count "HEAD..$upstream" 2>/dev/null)"
+        [[ "$BEHIND" =~ ^[0-9]+$ ]] || { BEHIND=""; FETCH_STATE="failed"; }
+      else
+        FETCH_STATE="failed"   # fetched, but nothing to compare against
+      fi
+    fi
+  else
+    FETCH_STATE="no-git-repo"
+  fi
+fi
+
+# Human-readable reason + clone age for the "remote not checked" qualifier.
+remote_qualifier() {
+  local reason age=""
+  case "$FETCH_STATE" in
+    timeout)     reason="fetch timed out" ;;
+    no-git-repo) reason="no git repo" ;;
+    *)           reason="offline" ;;
+  esac
+  if [[ -n "$CLONE_UPDATED" ]]; then
+    age="$(node -e '
+      const t = Date.parse(process.argv[1]);
+      if (!t) process.exit(3);
+      const h = Math.floor((Date.now() - t) / 3600000);
+      process.stdout.write(h < 48 ? h + " hour(s) ago" : Math.floor(h / 24) + " day(s) ago");
+    ' "$CLONE_UPDATED" 2>/dev/null)"
+  fi
+  echo "remote not checked: $reason; clone last refreshed ${age:-at an unknown time}"
+}
+
 # --- 3. verdict -------------------------------------------------------------
 if [[ "$INSTALLED_VER" == "$EXPECTED_VER" ]]; then
-  echo "PLUGIN-VERSION: OK - $PLUGIN_KEY installed $INSTALLED_VER == $SOURCE_DESC $EXPECTED_VER"
+  if [[ "$SOURCE_DESC" == "marketplace clone" && "$FETCH_STATE" == "ok" && -n "$BEHIND" && "$BEHIND" -gt 0 ]]; then
+    # Install matches the clone, but the clone itself is provably behind. This
+    # is the exact trap the age advisory could only guess at: `claude plugin
+    # update` would find nothing new and report success-shaped output.
+    {
+      echo "PLUGIN-VERSION: STALE-CLONE - $PLUGIN_KEY install matches clone ($INSTALLED_VER) but the clone is $BEHIND commit(s) behind its remote"
+      echo "  installed at: ${INSTALL_PATH:-?}"
+      echo "  The install can only be as fresh as the clone it came from, and the clone"
+      echo "  is behind. Guards shipped since then are simply not here."
+      echo "  Remedy — BOTH commands, in this order:"
+      echo "    claude plugin marketplace update $MARKET_NAME"
+      echo "    claude plugin update $PLUGIN_KEY"
+      echo "  The second alone is not enough: it reads the local clone, so if the clone"
+      echo "  is stale it finds nothing new and reports success. Then restart the session"
+      echo "  (or /reload-plugins) — an updated copy is not live until then."
+    } >&2
+    exit 1
+  fi
+  if [[ "$SOURCE_DESC" == "marketplace clone" ]]; then
+    if [[ "$FETCH_STATE" == "ok" ]]; then
+      echo "PLUGIN-VERSION: OK - $PLUGIN_KEY installed $INSTALLED_VER == marketplace clone $EXPECTED_VER (clone current with remote)"
+    else
+      echo "PLUGIN-VERSION: OK - $PLUGIN_KEY installed $INSTALLED_VER == marketplace clone $EXPECTED_VER ($(remote_qualifier))"
+    fi
+  else
+    echo "PLUGIN-VERSION: OK - $PLUGIN_KEY installed $INSTALLED_VER == $SOURCE_DESC $EXPECTED_VER"
+  fi
   [[ -n "$CLONE_NOTE" ]] && echo "  note: $CLONE_NOTE" >&2
   exit 0
 fi
@@ -200,6 +298,8 @@ fi
   echo "PLUGIN-VERSION: DRIFTED - $PLUGIN_KEY installed $INSTALLED_VER, $SOURCE_DESC offers $EXPECTED_VER"
   echo "  installed at: ${INSTALL_PATH:-?}"
   [[ -n "$INSTALL_SHA" ]] && echo "  installed sha: $INSTALL_SHA"
+  [[ "$FETCH_STATE" == "ok" && -n "$BEHIND" && "$BEHIND" -gt 0 ]] \
+    && echo "  AND the clone itself is $BEHIND commit(s) behind its remote — both staleness points at once."
   echo "  A stale install runs the code from before every fix released since"
   echo "  $INSTALLED_VER — silently. Guards you shipped are simply not there, and a"
   echo "  defect you already fixed will be re-reported as new."

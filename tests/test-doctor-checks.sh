@@ -165,6 +165,62 @@ run_version
 assert_eq "version/one-verdict-line" "1" \
   "$(cat "$BOX/out.txt" "$BOX/err.txt" 2>/dev/null | grep -c '^PLUGIN-VERSION: ' || true)" "$(evidence)"
 
+# --- 8b. STALE-CLONE: install == clone, clone behind its remote (INNOV-279) --
+# Turns the clone dir into a real git repo with a LOCAL bare origin (no network,
+# resolves instantly). origin/HEAD is deliberately absent (remote add + fetch
+# never sets it), so this also exercises the origin/main fallback.
+gitify_clone() { # "unreachable" | <n commits ahead on origin>
+  local clone="$CFG/plugins/marketplaces/brain-marketplace"
+  local origin="$BOX/origin.git"
+  ( cd "$clone" \
+    && git -c init.defaultBranch=main init -q . \
+    && git add -A . \
+    && git -c user.email=t@t -c user.name=t commit -qm base ) >/dev/null 2>&1
+  if [[ "$1" == "unreachable" ]]; then
+    git -C "$clone" remote add origin "$BOX/does-not-exist.git" >/dev/null 2>&1
+    return 0
+  fi
+  git clone -q --bare "$clone" "$origin" >/dev/null 2>&1
+  git -C "$clone" remote add origin "$origin" >/dev/null 2>&1
+  git -C "$clone" fetch -q origin >/dev/null 2>&1
+  local i=0 w="$BOX/ahead"
+  if [[ "$1" -gt 0 ]]; then
+    git clone -q "$origin" "$w" >/dev/null 2>&1
+    while [[ $i -lt $1 ]]; do
+      i=$((i + 1)); echo "$i" >"$w/f$i"
+      git -C "$w" add "f$i" >/dev/null 2>&1
+      git -C "$w" -c user.email=t@t -c user.name=t commit -qm "ahead $i" >/dev/null 2>&1
+    done
+    git -C "$w" push -q origin main >/dev/null 2>&1
+  fi
+}
+
+# (a) origin has 3 newer commits, install == clone => STALE-CLONE, exit 1
+mk_config "0.2.22" "0.2.22"
+gitify_clone 3
+run_version
+assert_eq "version/stale-clone-remote-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "version/stale-clone-remote-verdict" "PLUGIN-VERSION: STALE-CLONE" "$(first_line "$BOX/err.txt")" "$(evidence)"
+assert_contains "version/stale-clone-remote-says-behind" "behind" "$(out_all)" "$(evidence)"
+assert_contains "version/stale-clone-remote-remedy-marketplace-first" "plugin marketplace update" "$(out_all)" "$(evidence)"
+assert_contains "version/stale-clone-remote-remedy-plugin-update" "plugin update brain@brain-marketplace" "$(out_all)" "$(evidence)"
+
+# (b) origin unreachable => OK, exit 0, but SAYS the remote was not checked.
+# Offline machines must never fail the health check — hard requirement.
+mk_config "0.2.22" "0.2.22"
+gitify_clone unreachable
+run_version
+assert_eq "version/offline-exit-0" "0" "$STATUS" "$(evidence)"
+assert_prefix "version/offline-verdict-OK" "PLUGIN-VERSION: OK" "$(first_line "$BOX/out.txt")" "$(evidence)"
+assert_contains "version/offline-says-remote-not-checked" "remote not checked" "$(first_line "$BOX/out.txt")" "$(evidence)"
+
+# (c) fetch succeeds, behind=0 => OK, and SAYS the clone is current
+mk_config "0.2.22" "0.2.22"
+gitify_clone 0
+run_version
+assert_eq "version/clone-current-exit-0" "0" "$STATUS" "$(evidence)"
+assert_contains "version/clone-current-says-so" "clone current" "$(first_line "$BOX/out.txt")" "$(evidence)"
+
 # ===================================================== check 8 (INNOV-278) ===
 echo "--- B. check-allowlist.sh (INNOV-278) ---"
 
