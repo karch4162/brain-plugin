@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# test-doctor-checks.sh — quality gate for /brain:doctor checks 7 and 8:
+# test-doctor-checks.sh — quality gate for /brain:doctor checks 7, 8 and 9:
 #   brain/bin/check-plugin-version.sh   (INNOV-277)
 #   brain/bin/check-allowlist.sh        (INNOV-278)
+#   brain/bin/check-gitignore.sh        (INNOV-281)
 #
 # Both exist because a silent precondition failure cost this workstream real
 # work. Check 7: the author's own install was 0.2.19 against a 0.2.22 source,
@@ -354,6 +355,96 @@ mk_vault "$(cat "$REPO_ROOT/brain/templates/saveinclude")"
 run_allow
 assert_eq "antidrift/shipped-template-passes" "0" "$STATUS" \
   "the vault template must cover the required set, or every new vault starts broken" "$(evidence)"
+
+# ===================================================== check 9 (INNOV-281) ===
+echo "--- D. check-gitignore.sh (INNOV-281) ---"
+
+GI_CHECK="$REPO_ROOT/brain/bin/check-gitignore.sh"
+GI_TEMPLATE="$REPO_ROOT/brain/templates/gitignore"
+
+mk_gvault() { # gitignore-contents (or no arg for no file)
+  BOX="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+  VAULT="$BOX/vault"
+  mkdir -p "$VAULT/wiki" "$VAULT/graphify"
+  [[ $# -gt 0 ]] && printf '%s' "$1" >"$VAULT/.gitignore"
+}
+
+run_gitignore() { # [args...]
+  ( unset CLAUDE_PROJECT_DIR
+    BRAIN_ROOT="$VAULT" bash "$GI_CHECK" "$@"
+  ) >"$BOX/out.txt" 2>"$BOX/err.txt"
+  STATUS=$?
+}
+
+# --- 20. THE REAL CASE: pre-0.2.24 vault, no .brain/ => INCOMPLETE -------
+# Simulated by seeding from the current template MINUS the .brain/ entry and
+# its marker — exactly what a vault scaffolded before 0.2.24 looks like.
+pre024="$(grep -vxF '.brain/' "$GI_TEMPLATE" | grep -v '^# doctor:required machine-local session state')"
+mk_gvault "$pre024"$'\n'
+run_gitignore
+assert_eq "gitignore/pre-024-vault-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "gitignore/pre-024-verdict" "GITIGNORE: INCOMPLETE" "$(first_line "$BOX/err.txt")" "$(evidence)"
+assert_contains "gitignore/names-missing-entry" ".brain/" "$(out_all)" "$(evidence)"
+assert_contains "gitignore/remedy-is-fix" "--fix" "$(out_all)" "$(evidence)"
+
+# --- 21. --fix APPENDS and preserves a customized file -------------------
+# The property that matters: users add their own private patterns, and a
+# template overwrite would silently drop them. Appending is the only safe edit.
+mk_gvault "$pre024"$'\nmy-private-notes/\n'
+before="$(cat "$VAULT/.gitignore")"
+run_gitignore --fix
+assert_eq "gitignore/fix-exit-0" "0" "$STATUS" "$(evidence)"
+after="$(cat "$VAULT/.gitignore")"
+assert_eq "gitignore/fix-preserves-prefix-byte-identical" "$before" "${after:0:${#before}}" \
+  "the original content must survive untouched at the head of the file"
+assert_contains "gitignore/fix-kept-custom-entry" "my-private-notes/" "$after"
+assert_contains "gitignore/fix-appended-missing" ".brain/" "$after"
+run_gitignore
+assert_eq "gitignore/fix-then-clean" "0" "$STATUS" "$(evidence)"
+
+# --- 22. a vault seeded from the current template verbatim => OK ---------
+# The acceptance criterion: a fresh vault is born passing.
+mk_gvault "$(cat "$GI_TEMPLATE")"
+run_gitignore
+assert_eq "gitignore/shipped-template-passes" "0" "$STATUS" \
+  "the shipped template must satisfy its own check, or every new vault starts broken" "$(evidence)"
+assert_prefix "gitignore/shipped-template-verdict" "GITIGNORE: OK" "$(first_line "$BOX/out.txt")" "$(evidence)"
+
+# --- 23. no .gitignore => INCOMPLETE, and --fix does NOT create one ------
+# Seeding the file is /brain:init's job and its consent flow; a vault missing
+# it may be mid-setup rather than broken.
+mk_gvault
+run_gitignore
+assert_eq "gitignore/missing-file-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "gitignore/missing-file-verdict" "GITIGNORE: INCOMPLETE" "$(first_line "$BOX/err.txt")" "$(evidence)"
+assert_contains "gitignore/missing-file-names-template" "templates" "$(out_all)" "$(evidence)"
+run_gitignore --fix
+if [[ ! -f "$VAULT/.gitignore" ]]; then
+  pass "gitignore/fix-does-not-create-a-missing-gitignore"
+else
+  fail "gitignore/fix-does-not-create-a-missing-gitignore" "--fix must not seed the file"
+fi
+
+# --- 24. a template with ZERO markers => INCOMPLETE, never OK ------------
+# A checker that could not establish the required set must not say ✅. The
+# script resolves the template via its own location, so run a copy from a
+# temp layout whose template has the markers stripped.
+mk_gvault "$(cat "$GI_TEMPLATE")"
+mkdir -p "$BOX/plug/bin" "$BOX/plug/templates"
+cp "$GI_CHECK" "$BOX/plug/bin/check-gitignore.sh"
+grep -v '^# doctor:required' "$GI_TEMPLATE" >"$BOX/plug/templates/gitignore"
+( unset CLAUDE_PROJECT_DIR
+  BRAIN_ROOT="$VAULT" bash "$BOX/plug/bin/check-gitignore.sh"
+) >"$BOX/out.txt" 2>"$BOX/err.txt"
+STATUS=$?
+assert_eq "gitignore/zero-markers-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "gitignore/zero-markers-verdict" "GITIGNORE: INCOMPLETE" "$(first_line "$BOX/err.txt")" "$(evidence)"
+
+# --- 25. the real template defines exactly 6 required entries ------------
+# The positive control for case 24: the shipped markers are present and parse.
+assert_eq "gitignore/template-has-6-markers" "6" \
+  "$(grep -c '^# doctor:required ' "$GI_TEMPLATE")" \
+  "required: chats/, 4 graphify scratch patterns, .brain/"
 
 echo
 echo "$PASSED passed, $FAILED failed"

@@ -1,12 +1,21 @@
 # Vault .gitignore (seeded by /brain:init).
+# Marker comment lines (the ones below naming why an entry is required) are
+# the plugin's dependency set — /brain:doctor check 9 (bin/check-gitignore.sh)
+# parses THIS file for them, so the template stays the one definition. Keep
+# each marker on its own line directly above its entry.
 # Harvested transcripts are private staging — never commit them (POC §14.7).
+# doctor:required private harvest staging — must never be committed (POC §14.7)
 chats/
 
 # graphify machine-specific scratch (interpreter path, detect/extract temp, cost log).
 # The durable artifacts (graph.json, GRAPH_REPORT.md, manifest.json) ARE committed.
+# doctor:required graphify scratch under graphify-out/ — machine-specific, never shared
 graphify-out/.graphify_*
+# doctor:required graphify scratch anywhere in the tree — machine-specific, never shared
 **/.graphify_*
+# doctor:required graphify root pin — POSIX-vs-native path is per-checkout
 .graphify_root
+# doctor:required graphify interpreter cache — per-machine, goes stale when moved
 .graphify_python
 
 # Machine-local state about in-flight brain commands: the wiki/hot.md pin that
@@ -14,6 +23,7 @@ graphify-out/.graphify_*
 # (--start / --status / --end). Per-checkout and per-session — never shared, and
 # deliberately NOT in .saveinclude, so no command can commit it. A git worktree
 # gets its own .brain/, which is what makes parallel sessions genuinely isolated.
+# doctor:required machine-local session state (hot.md pin, session record) — never shared
 .brain/
 
 # OS / editor
