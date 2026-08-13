@@ -28,8 +28,9 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/bin/check-plugin-version.sh"
    ```
-   - **Exit `0` (`PLUGIN-VERSION: OK`) →** ✅, quote the version.
+   - **Exit `0` (`PLUGIN-VERSION: OK`) →** ✅, quote the line **including its qualifier** — it says either `(clone current with remote)` (the clone was fetch-verified) or `(remote not checked: <reason>; clone last refreshed <age>)` (offline / no git repo / fetch timed out — still ✅, never fail for being offline). Don't trim the qualifier; it is what was actually compared.
    - **Exit `1` (`PLUGIN-VERSION: DRIFTED`) →** ❌ → **R6**. Relay the line **verbatim** — it names both versions and the install path.
+   - **Exit `1` (`PLUGIN-VERSION: STALE-CLONE`) →** ❌ → **R6**. Install matches the clone, but a successful fetch proved the clone is N commit(s) behind its remote — the trap where `claude plugin update` reports success and changes nothing. Relay verbatim. **The remedy ORDER matters:** `claude plugin marketplace update <mp>` FIRST, then `claude plugin update <key>`, then restart/reload.
    - **`PLUGIN-VERSION: SKIPPED` (exit `0`) →** ⚠️ **"skipped — <reason>", never ✅.** A machine running from source (`--plugin-dir`) legitimately skips. A false ✅ here is what this check exists to prevent.
 
    Why it matters: measured 2026-08-06, the author's own install was **0.2.19 against a 0.2.22 source** — missing `vault-commit.sh`, `write-hot.sh`, `check-hot-budget.sh`, `label-guard.mjs` and `check-anchors.mjs`. **Nine shipped fixes were not running**, and INNOV-265 was very likely filed against an already-fixed defect for exactly this reason. A stale install doesn't misbehave; it behaves like an older, worse version of itself, silently.
