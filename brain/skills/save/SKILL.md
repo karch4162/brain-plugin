@@ -15,7 +15,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --start save   # from the vault root, or with BRAIN_ROOT=<vault> set
    ```
-   - **Exit `0`, first line `SESSION: OK` →** the session is recorded and you are on a working branch. A second line, `  pin: <branch>:<sha>`, is printed — **keep it exactly as written; step 6 passes it back.** Go on to step 0b.
+   - **Exit `0`, first line `SESSION: OK` →** the session is recorded and you are on a working branch. A second line, `  pin: <branch>:<sha>`, is printed — **step 6 passes the recorded pin back (via `--print-pin`, since step 0b may legitimately update it).** Go on to step 0b.
    - **Exit `0`, first line `SESSION: WARN` →** proceed, but **another session is live against this vault.** Relay the script's `SESSION: WARN` line to the user **verbatim** — it names the other session's branch and pid; do not paraphrase or re-derive it — and carry it into the output block. The `pin:` line is printed the same way; step 6 will refuse if that other session moves HEAD underneath you, which is the point.
    - **Exit `1`, first line `SESSION: REFUSED` →** **stop the whole command here.** No log, no hot.md rewrite, no commit. Relay the script's `SESSION: REFUSED` line to the user **verbatim** — it names the reason and the remedy — and **do not work around it with a raw `git checkout` / `git switch` / `git branch`.** The branch state it refused on is the thing being protected; getting onto a working branch by hand is the same defect as committing by hand in step 6.
 
@@ -23,7 +23,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/bin/check-freshness.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
    ```
-   - **Exit `0` (`FRESHNESS: OK`) →** the base is current (fast-forwarded, merged, or already up to date). Do the whole save, step 3 included.
+   - **Exit `0` (`FRESHNESS: OK`) →** the base is current (fast-forwarded, merged, or already up to date). If the guard fast-forwarded or merged, it also **updated this session's recorded pin** to the new HEAD (the move was this session's own doing, so the pin follows it) — which is why step 6 fetches the pin with `--print-pin` rather than reusing step 0a's literal line. Do the whole save, step 3 included.
    - **Exit `1` (`FRESHNESS: BLOCKED`) →** skip **step 3 only**. Relay the script's `FRESHNESS: BLOCKED` line to the user **verbatim** — it names the branch, the counts and the remedy; do not paraphrase or re-derive it — and report the skipped hot.md refresh in the output block.
    - **Only the hot.md rewrite is gated.** The session log (step 2), the `wiki/log.md` line (step 4) and the graph builds/sync (steps 5–5c) are **append-only or additive** — a stale base cannot revert anything through them, so they **always** run.
 
@@ -137,7 +137,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/bin/vault-commit.sh" -m "save: <date> session — <slug>" --pin "<branch>:<sha>"
    ```
-   `<branch>:<sha>` is the `pin:` value step 0a printed, passed through unchanged — **a pin makes vault-commit refuse if another session moved HEAD mid-run, which is the second half of the 2026-08-05 incident.** Don't re-derive it with `git rev-parse`: the whole value of a pin is that it is what *you* saw at the start, not what is true now. If you no longer have step 0a's output, `bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --print-pin` reprints this session's recorded pin.
+   `<branch>:<sha>` is this session's **recorded** pin — step 0a's `pin:` value, except that when step 0b fast-forwarded or merged, the record was updated to the post-freshness sha (that move was this session's own, so the old pin would wrongly refuse every stale-branch save — INNOV-285). So fetch it with `bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --print-pin` and pass it through unchanged; step 0a's literal line is only equivalent when 0b didn't move HEAD. **A pin makes vault-commit refuse if another session moved HEAD mid-run, which is the second half of the 2026-08-05 incident.** Don't re-derive it with `git rev-parse`: the whole value of a pin is that it is what *this session* saw, not what is true now.
    - **Exit `0` (`VAULT-COMMIT: OK`) →** committed (or there was nothing to commit — the line says which). Quote it in the output block.
    - **Exit `1` (`VAULT-COMMIT: REFUSED`) →** **nothing was staged and nothing was committed.** Relay the script's `VAULT-COMMIT: REFUSED` line and its remedy to the user **verbatim** — it names the branch, the offending paths and the fix; do not paraphrase, do not re-derive it, and **do not work around it with raw git**. Finish the rest of the save and report the commit as refused.
 
@@ -169,3 +169,4 @@ Open loops carried forward: <n>
 - **`/brain:save` is also the seed mechanism.** `/brain:init` offers to run it for the **first** build (step 5 treats a scope-table repo with no graph yet as a first/full build). So the first invocation may be a seed, not an end-of-session save — the log slug should reflect that ("seed brain for <repo>").
 - **Never hand-resolve merge conflicts under `graphify-out/`.** Two independent rebuilds re-cluster and re-label the same communities, so one cluster shows up as a rename/rename conflict between two unrelated-looking names — the "conflict" is cosmetic. **Take one side wholesale — normally the newer build — and let the next step-5c refresh regenerate.** (Learned resolving 143 of these on one PR.)
 - The mirror of this is [[resume]].
+
