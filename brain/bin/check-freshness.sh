@@ -30,6 +30,9 @@ set -euo pipefail
 
 VAULT="${BRAIN_ROOT:-${CLAUDE_PROJECT_DIR:-$PWD}}"
 
+# For finding sibling scripts (session.sh) regardless of cwd.
+BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 MERGE=1
 if [[ "${1:-}" == "--no-merge" ]]; then
   MERGE=0
@@ -114,11 +117,29 @@ dirty_note() {
   echo "  note: working tree was dirty; the merge was attempted against uncommitted changes." >&"${1:-1}"
 }
 
+# INNOV-285: this script is about to move HEAD as part of the session's OWN save,
+# so the pin session.sh recorded at --start must follow the move — otherwise
+# vault-commit.sh --pin refuses every stale-branch save. HEAD is captured HERE,
+# before either merge attempt, and handed to session.sh --repin along with the
+# post-move sha: session.sh rewrites the pin only when the recorded sha matches
+# the pre-move one exactly, so a HEAD moved by ANOTHER session is never adopted
+# and still refuses at commit time. No session file => nothing to repin.
+OLD_SHA="$(git -C "$VAULT" rev-parse HEAD 2>/dev/null || true)"
+repin_session() { # new-sha
+  [[ -f "$VAULT/.brain/session.json" && -n "$OLD_SHA" && -n "${1:-}" ]] || return 0
+  if ! BRAIN_ROOT="$VAULT" bash "$BIN_DIR/session.sh" --repin "$OLD_SHA" "$1" >/dev/null 2>&1; then
+    echo "  note: the session pin was NOT updated for this HEAD move (the recorded pin"
+    echo "        does not match the pre-merge sha, so another session moved HEAD too);"
+    echo "        vault-commit.sh will refuse that pin — the moved-HEAD guard working."
+  fi
+}
+
 if (( AHEAD == 0 )); then
   # --- 5. common case: fresh save branch, no local commits => fast-forward ---
   if git -C "$VAULT" merge --ff-only "$UPSTREAM" >/dev/null 2>&1; then
     echo "FRESHNESS: OK - fast-forwarded $BEHIND commit(s) from $UPSTREAM"
     dirty_note 1
+    repin_session "$(git -C "$VAULT" rev-parse "$UPSTREAM" 2>/dev/null || true)"
     exit 0
   fi
   REASON="fast-forward from $UPSTREAM failed"
@@ -129,6 +150,7 @@ else
   if git -C "$VAULT" merge --no-edit "$UPSTREAM" >/dev/null 2>&1; then
     echo "FRESHNESS: OK - merged $UPSTREAM ($BEHIND commit(s) behind, $AHEAD ahead)"
     dirty_note 1
+    repin_session "$(git -C "$VAULT" rev-parse HEAD 2>/dev/null || true)"
     exit 0
   fi
   # Leave nothing half-merged.

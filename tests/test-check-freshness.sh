@@ -22,6 +22,8 @@ set -uo pipefail
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/.." && pwd)"
 FRESH="$REPO_ROOT/brain/bin/check-freshness.sh"
+SESSION="$REPO_ROOT/brain/bin/session.sh"
+VAULT_COMMIT="$REPO_ROOT/brain/bin/vault-commit.sh"
 
 PASSED=0
 FAILED=0
@@ -409,6 +411,95 @@ for scenario in no-merge conflict dirty; do
   assert_eq "no-push/$scenario/origin-commit-count-unchanged" "$o_count_before" "$(origin_count)" \
     "$(evidence "$BOX")"
 done
+
+# --- 11. INNOV-285 (a): a stale-branch save REPINS, and vault-commit accepts --
+# The end-to-end defect: session.sh --start records branch:sha, this script then
+# fast-forwards and moves HEAD, and before the fix vault-commit.sh --pin refused
+# every stale-branch save. The freshness step must update the session's recorded
+# pin when IT is the thing that moved HEAD.
+echo "--- 11. stale-branch save: freshness repins its own move ---"
+SID="fresh-sess-A"
+# Runs session.sh / vault-commit.sh under the same identity check-freshness.sh's
+# repin call will resolve from the environment.
+run_sess() { # [args...]
+  BRAIN_ROOT="$VAULT" BRAIN_SESSION_ID="$SID" bash "$SESSION" "$@" \
+    >"$BOX/sout.txt" 2>"$BOX/serr.txt"
+  SSTATUS=$?
+}
+run_commit() { # [args...]
+  BRAIN_ROOT="$VAULT" bash "$VAULT_COMMIT" "$@" >"$BOX/cout.txt" 2>"$BOX/cerr.txt"
+  CSTATUS=$?
+}
+run_fresh_sid() { # vault
+  (
+    cd "$1" 2>/dev/null || exit 127
+    unset CLAUDE_PROJECT_DIR
+    BRAIN_ROOT="$1" BRAIN_SESSION_ID="$SID" bash "$FRESH"
+  ) >"$BOX/out.txt" 2>"$BOX/err.txt"
+  STATUS=$?
+}
+recorded_pin() { # -> what --print-pin replays, without the "  pin: " prefix
+  BRAIN_ROOT="$VAULT" BRAIN_SESSION_ID="$SID" bash "$SESSION" --print-pin 2>/dev/null \
+    | sed -n 's/^  pin: //p' | head -n 1 | tr -d '\r'
+}
+
+sb_new
+printf 'logs/\nwiki/hot.md\nwiki/log.md\ngraphify/\n' >"$VAULT/.saveinclude"
+run_sess --start save                                   # on main => creates brain/save-<date>
+assert_eq "repin-ff/session-start-exit-0" "0" "$SSTATUS" \
+  "session stderr: [$(tr '\n' '|' <"$BOX/serr.txt" 2>/dev/null)]"
+pin_before="$(recorded_pin)"
+seed_push "teammate 1" "wiki/hot.md" "hot cache v1"
+seed_push "teammate 2" "wiki/notes.md" "notes"
+want="$(origin_sha)"
+run_fresh_sid "$VAULT"
+assert_eq "repin-ff/freshness-exit-0" "0" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "repin-ff/stdout-first-line-OK" "FRESHNESS: OK" "$(first_line "$BOX/out.txt")" \
+  "$(evidence "$BOX")"
+assert_eq "repin-ff/head-fast-forwarded" "$want" "$(vault_sha)" "$(evidence "$BOX")"
+pin_after="$(recorded_pin)"
+assert_ne "repin-ff/pin-was-updated" "$pin_before" "$pin_after" \
+  "the recorded pin must follow the freshness step's own HEAD move"
+assert_eq "repin-ff/pin-sha-is-the-new-head" "${pin_after#*:}" "$(vault_sha)" \
+  "pin after: [$pin_after]"
+printf 'hot cache v1\nthis session adds a line\n' >"$VAULT/wiki/hot.md"
+run_commit -m "stale-branch save, post-freshness pin" --pin "$pin_after"
+assert_eq "repin-ff/vault-commit-accepts" "0" "$CSTATUS" \
+  "pin: [$pin_after]" \
+  "commit stderr: [$(tr '\n' '|' <"$BOX/cerr.txt" 2>/dev/null)]"
+
+# --- 12. INNOV-285 (b): a FOREIGN HEAD move is still refused ---------------
+# Another session commits after --start; freshness then merges upstream on top.
+# Freshness saw the post-foreign sha as its "before", the record holds the true
+# --start sha, so the repin must NOT happen — and vault-commit must still refuse
+# the (correctly) stale pin. The guard survives the fix.
+echo "--- 12. foreign HEAD move: pin NOT updated, vault-commit still refuses ---"
+sb_new
+printf 'logs/\nwiki/hot.md\nwiki/log.md\ngraphify/\n' >"$VAULT/.saveinclude"
+run_sess --start save
+pin_start="$(recorded_pin)"
+echo "foreign edit" >>"$VAULT/wiki/hot.md"              # a concurrent session commits
+git -C "$VAULT" add -A >/dev/null 2>&1
+git -C "$VAULT" commit -qm "foreign session commit" >/dev/null 2>&1
+seed_push "teammate" "wiki/notes.md" "notes"            # branch now diverged from origin
+run_fresh_sid "$VAULT"
+assert_eq "repin-foreign/freshness-exit-0" "0" "$STATUS" "$(evidence "$BOX")"
+assert_prefix "repin-foreign/stdout-first-line-OK" "FRESHNESS: OK" "$(first_line "$BOX/out.txt")" \
+  "$(evidence "$BOX")"
+assert_eq "repin-foreign/pin-NOT-updated" "$pin_start" "$(recorded_pin)" \
+  "a HEAD moved by another session must never be adopted into the pin" \
+  "$(evidence "$BOX")"
+if grep -qi 'pin was NOT updated' "$BOX/out.txt"; then
+  pass "repin-foreign/freshness-says-so"
+else
+  fail "repin-foreign/freshness-says-so" \
+    "expected a note that the session pin was not updated" "$(evidence "$BOX")"
+fi
+echo "mine" >>"$VAULT/wiki/log.md"
+run_commit -m "must refuse: HEAD moved by another session" --pin "$pin_start"
+assert_eq "repin-foreign/vault-commit-refuses" "1" "$CSTATUS" \
+  "pin: [$pin_start]" \
+  "commit stdout: [$(tr '\n' '|' <"$BOX/cout.txt" 2>/dev/null)]"
 
 # ================================================================= SUMMARY ==
 echo

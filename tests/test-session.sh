@@ -831,6 +831,89 @@ run_session --print-pin
 assert_eq "sanitize/pin-still-round-trips" "0" "$STATUS" "$(evidence)"
 SID="sess-A"
 
+echo "--- L. --repin: the freshness step moving HEAD is NOT a foreign move (INNOV-285) ---"
+# /brain:save step 0b (check-freshness.sh) fast-forwards/merges the branch as part
+# of THIS session's own save. Before --repin existed, that legitimate move made the
+# --start pin stale and step 6's vault-commit --pin refused every stale-branch
+# save. --repin updates the recorded pin ONLY when the caller can name the exact
+# pre-move sha the record holds — a HEAD moved by another session cannot, so the
+# moved-HEAD guard stays armed.
+
+# --- 40. own freshness move: repin accepted, new pin round-trips into vault-commit --
+sb_new "brain/work"
+GH_PATH="$GH_NONE"
+SID="sess-A"
+run_session --start save
+old_sha="$(head_sha)"
+echo "landed upstream" >>"$VAULT/wiki/log.md"          # the freshness ff/merge, simulated
+git -C "$VAULT" add -A >/dev/null 2>&1
+git -C "$VAULT" commit -qm "freshness fast-forward" >/dev/null 2>&1
+new_sha="$(head_sha)"
+run_session --repin "$old_sha" "$new_sha"
+assert_eq "repin/own-move-exit-0" "0" "$STATUS" "$(evidence)"
+assert_prefix "repin/own-move-verdict-OK" "SESSION: OK" "$(first_line "$BOX/out.txt")" "$(evidence)"
+assert_eq "repin/own-move-prints-new-pin" "  pin: brain/work:$new_sha" "$(nth_line "$BOX/out.txt" 2)" "$(evidence)"
+run_session --print-pin
+assert_eq "repin/print-pin-replays-the-NEW-sha" "  pin: brain/work:$new_sha" "$(nth_line "$BOX/out.txt" 2)" "$(evidence)"
+make_dirty
+run_commit -m "stale-branch save after freshness repin" --pin "brain/work:$new_sha"
+assert_eq "repin/vault-commit-accepts-the-new-pin" "0" "$CSTATUS" \
+  "commit stderr: [$(tr '\n' '|' <"$BOX/cerr.txt")]"
+
+# --- 41. foreign move: repin REFUSED, old pin kept, vault-commit still refuses --
+# The caller (freshness) saw sha1 before its merge, but the record holds sha0 —
+# something ELSE moved HEAD first. The pin must not be rewritten.
+sb_new "brain/work"
+GH_PATH="$GH_NONE"
+SID="sess-A"
+run_session --start save
+sha0="$(head_sha)"
+echo "other session" >>"$VAULT/wiki/log.md"            # a concurrent session commits
+git -C "$VAULT" add -A >/dev/null 2>&1
+git -C "$VAULT" commit -qm "concurrent session commit" >/dev/null 2>&1
+sha1="$(head_sha)"
+run_session --repin "$sha1" "$sha1"
+assert_eq "repin/foreign-move-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "repin/foreign-move-REFUSED" "SESSION: REFUSED" "$(first_line "$BOX/err.txt")" "$(evidence)"
+run_session --print-pin
+assert_eq "repin/foreign-move-pin-unchanged" "  pin: brain/work:$sha0" "$(nth_line "$BOX/out.txt" 2)" "$(evidence)"
+make_dirty
+run_commit -m "must refuse" --pin "brain/work:$sha0"
+assert_eq "repin/vault-commit-still-refuses-after-foreign-move" "1" "$CSTATUS" \
+  "commit stdout: [$(tr '\n' '|' <"$BOX/cout.txt")]"
+
+# --- 42. a branch switch is never a repinnable move ------------------------
+sb_new "brain/work"
+GH_PATH="$GH_NONE"
+SID="sess-A"
+run_session --start save
+sha="$(head_sha)"
+git -C "$VAULT" checkout -q -B "brain/other" >/dev/null 2>&1
+run_session --repin "$sha" "$sha"
+assert_eq "repin/branch-switch-exit-1" "1" "$STATUS" "$(evidence)"
+assert_contains "repin/branch-switch-names-both-branches" "brain/other" "$(out_all)" "$(evidence)"
+run_session --print-pin
+assert_eq "repin/branch-switch-pin-unchanged" "  pin: brain/work:$sha" "$(nth_line "$BOX/out.txt" 2)" "$(evidence)"
+
+# --- 43. no session registered => nothing to repin, and that is OK ---------
+# check-freshness.sh also runs standalone (outside /brain:save); a missing record
+# must not turn the freshness check into a failure.
+sb_new "brain/work"
+GH_PATH="$GH_NONE"
+SID="sess-A"
+run_session --repin "$(head_sha)" "$(head_sha)"
+assert_eq "repin/no-session-exit-0" "0" "$STATUS" "$(evidence)"
+assert_contains "repin/no-session-says-nothing-to-repin" "nothing to repin" "$(out_all)" "$(evidence)"
+
+# --- 44. --repin without both shas is a refusal, not an unpinned success ---
+sb_new "brain/work"
+GH_PATH="$GH_NONE"
+SID="sess-A"
+run_session --start save
+run_session --repin "$(head_sha)"
+assert_eq "repin/missing-arg-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "repin/missing-arg-REFUSED" "SESSION: REFUSED" "$(first_line "$BOX/err.txt")" "$(evidence)"
+
 # ------------------------------------------------------------------ done ---
 echo
 echo "$PASSED passed, $FAILED failed"

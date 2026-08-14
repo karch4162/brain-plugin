@@ -32,6 +32,7 @@
 #   BRAIN_ROOT=<vault> bash session.sh --status                # report, mutate nothing
 #   BRAIN_ROOT=<vault> bash session.sh --end                   # deregister THIS session
 #   BRAIN_ROOT=<vault> bash session.sh --print-pin             # BRANCH:SHA for vault-commit.sh
+#   BRAIN_ROOT=<vault> bash session.sh --repin <old> <new>     # check-freshness.sh ONLY, see below
 #
 # Contract (callers and tests depend on exactly this):
 #   exit 0, stdout first line `SESSION: OK - <reason>`      => proceed
@@ -196,6 +197,8 @@ refuse() { # reason-line, then extra lines
 # --- 0. arguments -----------------------------------------------------------
 MODE=""
 COMMAND_NAME=""
+REPIN_OLD=""
+REPIN_NEW=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --start)      MODE="start"; COMMAND_NAME="${2:-}"; shift; [[ $# -gt 0 ]] && shift ;;
@@ -203,14 +206,22 @@ while [[ $# -gt 0 ]]; do
     --status)     MODE="status"; shift ;;
     --end)        MODE="end"; shift ;;
     --print-pin)  MODE="print-pin"; shift ;;
+    --repin)      MODE="repin"; REPIN_OLD="${2:-}"; REPIN_NEW="${3:-}"
+                  shift; [[ $# -gt 0 ]] && shift; [[ $# -gt 0 ]] && shift ;;
     *)            refuse "unknown argument '$1'" \
-                    "  Usage: session.sh --start <command-name> | --status | --end | --print-pin" ;;
+                    "  Usage: session.sh --start <command-name> | --status | --end | --print-pin | --repin <old-sha> <new-sha>" ;;
   esac
 done
 
 if [[ -z "$MODE" ]]; then
   refuse "no mode given" \
-    "  Usage: session.sh --start <command-name> | --status | --end | --print-pin"
+    "  Usage: session.sh --start <command-name> | --status | --end | --print-pin | --repin <old-sha> <new-sha>"
+fi
+if [[ "$MODE" == "repin" && ( -z "$REPIN_OLD" || -z "$REPIN_NEW" ) ]]; then
+  refuse "--repin needs the pre-move and post-move shas" \
+    "  Usage: session.sh --repin <old-sha> <new-sha>" \
+    "  It is called by check-freshness.sh after ITS OWN fast-forward/merge. A repin" \
+    "  that cannot name both shas cannot prove the move was its own, so it refuses."
 fi
 if [[ "$MODE" == "start" && -z "$COMMAND_NAME" ]]; then
   refuse "--start needs the name of the command starting the session" \
@@ -512,14 +523,15 @@ if [[ "$MODE" == "end" ]]; then
 fi
 
 # --- --print-pin ------------------------------------------------------------
-# The pin is the branch + sha AS THIS SESSION SAW THEM AT --start, not as they are
+# The pin is the branch + sha AS THIS SESSION SAW THEM AT --start (updated only by
+# --repin, i.e. by this session's own freshness step moving HEAD), not as they are
 # now. Reading them fresh would defeat the entire purpose: a HEAD that moved would
 # be re-pinned to its new value and vault-commit.sh would happily commit wherever
 # the other session left us.
 if [[ "$MODE" == "print-pin" ]]; then
   for i in "${!REC_ID[@]}"; do
     if [[ "${REC_ID[$i]}" == "$SELF_ID" ]]; then
-      echo "SESSION: OK - pin for session $SELF_ID as recorded at --start"
+      echo "SESSION: OK - pin for session $SELF_ID as recorded"
       echo "  pin: ${REC_BRANCH[$i]}:${REC_SHA[$i]}"
       [[ $ID_DEGRADED -eq 1 ]] && id_note
       exit 0
@@ -535,6 +547,49 @@ if [[ "$MODE" == "print-pin" ]]; then
     "  afterwards, because the whole point is to know where HEAD was THEN." \
     "${pin_id_note:-  (Identity came from \$$ID_SOURCE.)}" \
     "  Remedy: BRAIN_ROOT=\"$VAULT\" bash session.sh --start <command-name>"
+fi
+
+# --- --repin ----------------------------------------------------------------
+# INNOV-285. Called by check-freshness.sh ONLY, after it has ITSELF fast-forwarded
+# or merged the vault branch: that move is part of this session's own save, so the
+# pin recorded at --start must follow it — otherwise vault-commit.sh --pin refuses
+# every stale-branch save on the strength of a move the session made deliberately.
+# Both shas are the CALLER'S observations: <old-sha> is HEAD as it saw it before
+# its merge, <new-sha> is HEAD as it saw it after. The recorded pin is rewritten to
+# <new-sha> only when it matches <old-sha> exactly and the branch is unchanged.
+# That is what keeps the moved-HEAD guard intact: a HEAD moved by ANOTHER session
+# leaves the recorded pin pointing at a sha the caller never saw, the match fails,
+# nothing is rewritten, and vault-commit.sh still refuses. And because <new-sha> is
+# recorded verbatim rather than re-read from HEAD here, a foreign move in the
+# window between the caller's merge and this call is not laundered into the pin —
+# it too surfaces as a refusal at commit time.
+if [[ "$MODE" == "repin" ]]; then
+  for i in "${!REC_ID[@]}"; do
+    if [[ "${REC_ID[$i]}" == "$SELF_ID" ]]; then
+      if [[ "${REC_BRANCH[$i]}" != "${CUR_BRANCH:-}" ]]; then
+        refuse "session $SELF_ID is pinned to branch '${REC_BRANCH[$i]}' but HEAD is on '${CUR_BRANCH:-?}'" \
+          "  A repin may only follow a fast-forward/merge the caller made on the pinned" \
+          "  branch; a branch switch is never that. The recorded pin is unchanged."
+      fi
+      if [[ "${REC_SHA[$i]}" != "$REPIN_OLD" ]]; then
+        refuse "recorded pin sha '${REC_SHA[$i]}' does not match the pre-move sha '$REPIN_OLD'" \
+          "  HEAD was moved by something OTHER than the caller's own freshness step" \
+          "  (another session committed, merged or switched in between). The recorded" \
+          "  pin is unchanged, so vault-commit.sh will refuse it — which is the" \
+          "  moved-HEAD guard working, not a bug."
+      fi
+      write_state "${REC_BRANCH[$i]}" "$REPIN_NEW" "${REC_AT[$i]}" "${REC_CMD[$i]}"
+      echo "SESSION: OK - pin for session $SELF_ID updated after its own freshness merge"
+      echo "  pin: ${REC_BRANCH[$i]}:$REPIN_NEW"
+      [[ $ID_DEGRADED -eq 1 ]] && id_note
+      exit 0
+    fi
+  done
+  # No record for this id: check-freshness.sh also runs outside /brain:save, where
+  # there is no pin to maintain. Nothing to update is a success, not a failure.
+  echo "SESSION: OK - no session is registered for id $SELF_ID; nothing to repin"
+  [[ $ID_DEGRADED -eq 1 ]] && id_note
+  exit 0
 fi
 
 # --- --start ----------------------------------------------------------------
