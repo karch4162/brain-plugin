@@ -52,6 +52,14 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
    - Skip if check 4 failed — bind a vault first. A non-vault dir reports OK/skipped.
 
    **The required set is not listed here, deliberately.** It is parsed from the `# doctor:required` markers in `templates/gitignore` — the template IS the one definition (check 8's rule, same rationale).
+10. **Wiki concept-graph staleness (INNOV-286)** — `/brain:save` step 5c gates its refresh on notes changed *that session*, so staleness accumulates invisibly across sessions (recorded incident: 2 session-changed notes, 517 documents behind, step reported green).
+    ```bash
+    bash "${CLAUDE_PLUGIN_ROOT}/bin/check-concept-graph.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
+    ```
+    - **Exit `0` (`CONCEPT-GRAPH: OK`) →** ✅, quote the line — it carries the count.
+    - **Exit `0` (`CONCEPT-GRAPH: SKIPPED`) →** ⚠️ "skipped — <reason>", never ✅ (check 7's rule: a false ✅ is what this exists to prevent). A vault with no wiki graph yet legitimately skips.
+    - **Exit `1` (`CONCEPT-GRAPH: STALE`) →** ⚠️ **informational, no scripted repair** (like check 4c) — the remedy is `/brain:save` step 5c's graphify refresh (`wiki --update` through the *skill*), which the script's own remedy text names. Relay the line **verbatim**; it counts wiki notes changed (per git) since the last commit touching `graphify-out/graph.json` — never `manifest.json` (INNOV-271).
+    - Skip if check 4 failed — bind a vault first. A non-vault dir reports SKIPPED, not a crash.
 
 ## Repairs (ask before R1 — it reinstalls a global tool)
 

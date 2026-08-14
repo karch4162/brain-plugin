@@ -119,7 +119,14 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
      ```bash
      bash "${CLAUDE_PLUGIN_ROOT}/bin/changed-wiki-notes.sh"   # one vault-relative wiki/**/*.md path per line; silent + exit 0 when nothing changed
      ```
-     (Run from the vault root, or with `BRAIN_ROOT=<vault>` set. `--since <ref>` also covers notes committed since that ref; `--porcelain` prints a count first.) **This output is the authoritative changed-note list. `manifest.json` over-reports badly — hundreds of notes flagged when ten actually changed — and must never be used to decide what to re-extract**, since 5c dispatches a subagent per changed note. **If the script prints nothing, skip step 5c entirely.**
+     (Run from the vault root, or with `BRAIN_ROOT=<vault>` set. `--since <ref>` also covers notes committed since that ref; `--porcelain` prints a count first.) **This output is the authoritative changed-note list. `manifest.json` over-reports badly — hundreds of notes flagged when ten actually changed — and must never be used to decide what to re-extract**, since 5c dispatches a subagent per changed note. **If the script prints nothing, step 5c's refresh may be skipped — but only after the staleness check below has printed its line, and the skip report must carry that verdict.**
+   - **Then surface TOTAL graph staleness — before deciding to skip (INNOV-286).** The list above is this *session's* view only; staleness accumulates invisibly across sessions (recorded incident: 2 session-changed notes, concept graph **517 documents** behind, step reported green — same false-green class as INNOV-279). Run the check, don't reason about it:
+     ```bash
+     bash "${CLAUDE_PLUGIN_ROOT}/bin/check-concept-graph.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
+     ```
+     - **Exit `0` (`CONCEPT-GRAPH: OK` or `CONCEPT-GRAPH: SKIPPED`) →** quote the line in the output block. `SKIPPED` means staleness could not be measured (no wiki graph yet / not a git repo / `graph.json` never committed) — carry the stated reason; do not upgrade it to a plain OK.
+     - **Exit `1` (`CONCEPT-GRAPH: STALE - N document(s) behind`) →** **WARN only — it blocks nothing.** Deliberately skipping the refresh stays allowed; what is not allowed is a green-looking skip. Relay the script's line to the user **verbatim**, and if the changed-note list above was empty the skip reads `5c refresh skipped (no session changes) — CONCEPT-GRAPH: STALE - N document(s) behind`, never plain green. When it warns, prefer actually running the refresh below (`wiki --update` re-extracts only what changed) so the debt stops compounding.
+     - It counts wiki notes added/modified (per git, via `changed-wiki-notes.sh`) since the last commit that touched `graphify-out/graph.json` — never from `manifest.json`. `CONCEPT_GRAPH_THRESHOLD=<n>` overrides the default 25.
    - **Invoke the graphify skill on `wiki/`.** From the vault root, run the skill (`Skill` tool, `skill: "graphify"`) scoped to the `wiki/` folder — **incremental** if a wiki graph already exists, **full** on the first build:
      - If `graphify-out/graph.json` exists → argument `wiki --update` (the `--update` flow; only changed notes re-extract via the semantic cache).
      - If it does **not** exist (first-ever wiki build for this vault) → argument `wiki` (a full build; `--update` has no baseline to diff against and would no-op).
@@ -131,7 +138,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
      ```bash
      node "${CLAUDE_PLUGIN_ROOT}/bin/build-community-notes.mjs" graphify-out
      ```
-   Skip if no `wiki/` note changed. Commit `graphify-out/graph.json` + `GRAPH_REPORT.md` + `graphify-out/communities/` with the rest (the machine-specific `.graphify_*` files are gitignored).
+   Skip the refresh if no `wiki/` note changed this session and `check-concept-graph.sh` did not WARN; either way its `CONCEPT-GRAPH:` line goes in the output block. Commit `graphify-out/graph.json` + `GRAPH_REPORT.md` + `graphify-out/communities/` with the rest (the machine-specific `.graphify_*` files are gitignored).
 
 6. **Commit through `vault-commit.sh` — never with raw git.** This is the step that, run by hand, put a commit straight onto a protected `main` on 2026-08-05 while `sync-graph.sh`'s own guards refused one command earlier. **Do not run `git add` or `git commit` against the vault, ever** — not "just this once", not with `--force`, not because the script refused. One command does the whole step:
    ```bash
@@ -159,6 +166,7 @@ Session: <started on '<branch>' | WARN — <script's line>>
 Freshness: <up to date | fast-forwarded from origin/main | BLOCKED — <script's reason>>
 hot.md <refreshed (<n> words / <budget> budget) | refresh SKIPPED (branch not fresh) | write REFUSED — <script's reason>> · log.md appended
 Graph sync: <synced repos | not needed this session>
+Concept graph: <the CONCEPT-GRAPH: line, verbatim>
 Commit: <committed <n> paths on '<branch>' (not pushed) | nothing to commit | REFUSED — <script's reason>>
 Open loops carried forward: <n>
 ```
