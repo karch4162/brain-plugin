@@ -170,3 +170,18 @@ Open loops carried forward: <n>
 - **Never hand-resolve merge conflicts under `graphify-out/`.** Two independent rebuilds re-cluster and re-label the same communities, so one cluster shows up as a rename/rename conflict between two unrelated-looking names — the "conflict" is cosmetic. **Take one side wholesale — normally the newer build — and let the next step-5c refresh regenerate.** (Learned resolving 143 of these on one PR.)
 - The mirror of this is [[resume]].
 
+## Drain the findings queue (INNOV-262) — auto-file plugin defects to the vault's tracker
+
+Guards that hit a condition they cannot self-heal (scope-audit refusal, label-count regression, shrink-guard refusal, unresolvable `source:` anchor) queue the defect via `bin/file-finding.sh` into `<vault>/.brain/findings-queue.jsonl` — scripts have no tracker credentials, so **this session, which has the MCP access, is the drain**. Run this after step 6 (before step 7), whenever the queue file exists and is non-empty:
+
+1. **Resolve the tracker.** Read this vault's `tracker` field from the registry (`~/.claude/brain/registry.json`) — e.g. `{"type": "jira", "project": "INNOV"}` or `{"type": "linear", "team": "<team name>"}`. The queue itself is tracker-neutral; only this step routes. **If `tracker` is unset**, ask the user once where this vault's findings should go (offer Jira project / Linear team / "keep them queued"), persist the answer to the registry entry, then continue. Never hardcode a destination — a personal vault's findings must not land on a work board or vice versa.
+2. **Read the queue.** Each line is one finding: `fingerprint` (a `brain-fp-<hash>` string, also used as the tracker-side label), `class`, `repo`, `evidence`, `count`, `first_seen`, `last_seen`.
+3. **For each finding, search before creating** — the fingerprint label is the dedup key:
+   - **Jira:** `JQL: project = <tracker.project> AND labels = <fingerprint> AND statusCategory != Done`
+   - **Linear:** search the configured team's open issues for the fingerprint label (create the label if the tracker supports it; otherwise match the fingerprint string in the issue body).
+   - **Open match found →** add a comment to that issue ("seen again: <count>x, last <last_seen>, evidence: <evidence>") instead of creating a duplicate.
+   - **No open match →** create an issue in the configured project/team titled `[brain-autofiled] <class> in <repo>`, description from the queue entry (class, repo, evidence, count, first/last seen — **paths, counts and identifiers only; never paste file contents or secrets**), with labels `brain-plugin`, `brain-autofiled`, and the `<fingerprint>`.
+4. **Batch cap: create at most 3 new tickets per run.** Comment-on-existing does not count against the cap. Findings over the cap stay in the queue for the next save.
+5. **Remove drained lines from the queue** (both commented and created); leave capped/undrained lines in place. Delete the file when empty.
+6. **Degrade gracefully — never block the save.** No tracker MCP, offline, tracker unset and the user unavailable to answer, or any tracker error → leave the queue file intact, say so in the output block ("Findings: <n> queued, drain deferred (no tracker access)"), and finish the save normally. Never ask the user to file the ticket themselves — either the drain files it or the queue holds it.
+7. **Tell the user what happened** in the output block, e.g. `Findings: filed INNOV-301 (mis-scoped-graph, store-hub), commented INNOV-287 (label-count-regression, KDS), 0 left queued`.

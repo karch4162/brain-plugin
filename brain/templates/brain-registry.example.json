@@ -1,19 +1,22 @@
 {
   "//": "Brain registry (POC §16.2). Canonical location: ~/.claude/brain/registry.json.",
   "//governance": "Each vault carries its §7 profile — selecting a vault at /brain:init applies its policy to that project's sync. egress: off|anthropic-dpa|allow; access: private|eng-only|public; graphifyignore: default|strict.",
+  "//tracker": "Where auto-filed findings (INNOV-262) drain to, per vault. type: jira|linear|none; jira takes project, linear takes team. Unset = the drain asks once and persists the answer.",
   "vaults": [
     {
       "name": "personal",
       "path": "/c/Users/me/Projects/AI-OS/personal-brain",
       "remote": "git@github.com:me/personal-brain.git",
       "repos_dir": "/c/Users/me/Projects",
-      "governance": { "egress": "off", "access": "private", "graphifyignore": "default" }
+      "governance": { "egress": "off", "access": "private", "graphifyignore": "default" },
+      "tracker": { "type": "linear", "team": "Personal" }
     },
     {
       "name": "tray-brain",
       "path": "/c/Users/me/Projects/tray-brain",
       "remote": "git@github.com:vendsy/tray-brain.git",
-      "governance": { "egress": "off", "access": "eng-only", "graphifyignore": "strict" }
+      "governance": { "egress": "off", "access": "eng-only", "graphifyignore": "strict" },
+      "tracker": { "type": "jira", "project": "INNOV" }
     }
   ]
 }

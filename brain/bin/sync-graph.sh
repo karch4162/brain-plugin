@@ -387,6 +387,10 @@ for repo in "${repos[@]}"; do
         echo "  Nothing was copied for $name and no log line was written; the vault keeps the"
         echo "  mirror it already had. Fix the carve-out or the scope row, rebuild the graph,"
         echo "  then re-run this sync."
+        # INNOV-262: a refusal the sync cannot self-heal gets queued for auto-filing.
+        # Never on the UNKNOWN/SKIPPED paths — a machine with broken tooling must not
+        # spam findings about its own missing node.
+        BRAIN_ROOT="$VAULT" bash "$SCRIPT_DIR/file-finding.sh" mis-scoped-graph "$name" "${SCOPE_OUTPUT%%$'\n'*}" || true
       } >&2
       refused+=("$name")
       continue
@@ -446,6 +450,10 @@ for repo in "${repos[@]}"; do
       cp "$src/GRAPH_REPORT.md" "$dst/$name-GRAPH_REPORT.md"
     elif [[ "$guard_verdict" == "refuse" ]]; then
       echo "preserving labeled report for $name: incoming has $incoming_named named communities, existing has $existing_named — run /brain:label $name to refresh labels" >&2
+      # INNOV-262: queue the regression for auto-filing (not on the error path —
+      # "guard could not run" is this machine's tooling, not a plugin defect).
+      BRAIN_ROOT="$VAULT" bash "$SCRIPT_DIR/file-finding.sh" label-count-regression "$name" \
+        "incoming report names $incoming_named communities, existing names $existing_named" >&2 || true
     else
       # FAIL CLOSED. We could not establish that the copy is safe, so we do not
       # copy. Loud, because a silently un-refreshed report is its own trap.
