@@ -96,7 +96,16 @@ const targetSet = new Set(notes.map((f) => basename(f, '.md')));
 for (const repo of COVERED) {
   const cdir = join(VAULT, 'graphify', repo, 'communities');
   if (existsSync(cdir))
-    for (const f of readdirSync(cdir)) if (f.endsWith('.md')) targetSet.add(basename(f, '.md'));
+    for (const f of readdirSync(cdir))
+      if (f.endsWith('.md')) {
+        targetSet.add(basename(f, '.md'));
+        // Rename-protected stubs keep their OLD filename and carry the new label
+        // in `aliases:` frontmatter (build-community-notes.mjs) — a label-based
+        // [[_COMMUNITY_<Label>]] link must resolve too (INNOV-282). Same parser
+        // as the connectivity section below (fileAliases — hoisted declaration).
+        for (const a of fileAliases(readFileSync(join(cdir, f), 'utf8').replace(/\r\n/g, '\n')))
+          targetSet.add(a);
+      }
   targetSet.add(`${repo}-GRAPH_REPORT`);
 }
 
