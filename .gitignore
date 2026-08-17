@@ -15,3 +15,6 @@ Thumbs.db
 /chats/
 *.local
 .supervisor/
+
+.claude/settings.local.json
+.graphifyignore
