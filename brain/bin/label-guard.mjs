@@ -24,6 +24,8 @@
 //                                        countNamedLabels
 //   (b) WHEN MAY AN INCOMING REPORT    → mayReplaceReport
 //       REPLACE AN EXISTING ONE
+//   (c) HAS A FROZEN REPORT'S CLUSTERING → reportIdStaleness,
+//       GONE STALE (INNOV-288)             reportIdStalenessOf
 //
 // The invariant is identical in both places; only the TRIGGER differs.
 // label-communities.mjs imports (a) for its per-id preserve decision and (b) as
@@ -57,6 +59,12 @@
 //       → one integer line: how many communities that report NAMES. A missing
 //         file prints 0 and exits 0 (it names nothing). A present-but-unreadable
 //         file is an ERROR, exit 1 — see fail-closed above.
+//   node label-guard.mjs --stale <report.md> <graph.json>
+//       → `<missing> <total>` community ids the report names that graph.json no
+//         longer has, or the literal `unknown` when nothing can be concluded.
+//         ADVISORY ONLY, always exit 0 — it explains a freeze, it never gates a
+//         copy. See reportIdStaleness (c) below.
+//
 //   node label-guard.mjs --may-replace <existing.md> <incoming.md>
 //       → one line `<verdict> <existingNamed> <incomingNamed>`, verdict being
 //         literally `allow` or `refuse`.
@@ -154,6 +162,50 @@ export function mayReplaceReport(existingPath, incomingPath) {
   };
 }
 
+// (c) IS THE FROZEN REPORT DESCRIBING A CLUSTERING THAT STILL EXISTS? (INNOV-288)
+// graphify re-mints community ids on every rebuild, so a report the guard has
+// frozen slowly stops describing the graph beside it. This is the one place that
+// comparison lives — /brain:label's membership-staleness check imports it rather
+// than writing a second one.
+//
+// CONTRACT: a graph with NO community ids at all proves nothing (it may simply
+// predate clustering, or be a stub), so it yields `{ known: false }` and callers
+// must make no obsolescence claim. Ids are compared as strings on both sides:
+// graph emitters have shipped `community` as both number and string, and a
+// silent 3 !== "3" would make every healthy report look obsolete.
+export function reportIdStaleness(reportText, graphText) {
+  const unknown = { known: false, missing: 0, total: 0 };
+  let graph;
+  try {
+    graph = JSON.parse(graphText);
+  } catch {
+    return unknown;
+  }
+  const live = new Set();
+  for (const n of Array.isArray(graph?.nodes) ? graph.nodes : []) {
+    if (n?.community === undefined || n?.community === null) continue;
+    live.add(String(n.community));
+  }
+  const ids = [...readReportLabels(reportText).keys()];
+  if (live.size === 0 || ids.length === 0) return unknown;
+  let missing = 0;
+  for (const id of ids) if (!live.has(String(id))) missing++;
+  return { known: true, missing, total: ids.length };
+}
+
+// Path form of (c). Either file missing/unreadable → `{ known: false }`: an
+// advisory warning must never be the thing that breaks a sync.
+export function reportIdStalenessOf(reportPath, graphPath) {
+  try {
+    const report = loadReport(reportPath);
+    const graph = loadReport(graphPath);
+    if (!report.present || !graph.present) return { known: false, missing: 0, total: 0 };
+    return reportIdStaleness(report.text, graph.text);
+  } catch {
+    return { known: false, missing: 0, total: 0 };
+  }
+}
+
 // ---- CLI ---------------------------------------------------------------------
 
 const invokedDirectly = (() => {
@@ -175,10 +227,17 @@ if (invokedDirectly) {
       const r = mayReplaceReport(argv[1], argv[2]);
       console.log(`${r.verdict} ${r.existingNamed} ${r.incomingNamed}`);
       process.exit(r.verdict === 'allow' ? EXIT_ALLOW : EXIT_REFUSE);
+    } else if (argv[0] === '--stale') {
+      // `<missing> <total>` for a KNOWN answer; `unknown` otherwise. Always
+      // exit 0 — this is advisory text, never a gate.
+      const r = reportIdStalenessOf(argv[1], argv[2]);
+      console.log(r.known ? `${r.missing} ${r.total}` : 'unknown');
+      process.exit(EXIT_ALLOW);
     } else {
       console.error(
         'usage: label-guard.mjs --count <report.md>\n' +
-          '       label-guard.mjs --may-replace <existing-report.md> <incoming-report.md>'
+          '       label-guard.mjs --may-replace <existing-report.md> <incoming-report.md>\n' +
+          '       label-guard.mjs --stale <report.md> <graph.json>'
       );
       process.exit(EXIT_ERROR);
     }
