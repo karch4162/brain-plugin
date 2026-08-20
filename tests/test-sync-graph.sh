@@ -983,6 +983,134 @@ fi
 assert_files_differ "explicit-arg/stale-alpha-not-swept-in" \
   "$MBOX/repos/alpha/graphify-out/graph.json" "$MBOX/vault/graphify/alpha/graph.json"
 
+# ================================================== PART F: FREEZE VISIBILITY ==
+# INNOV-288. The label guard is correct but silent and permanent: once it starts
+# refusing, it refuses forever with the same one-line message, and nothing ever
+# tells the reader that the frozen report has drifted out of correspondence with
+# graph.json (measured in personal-brain: frozen 2026-08-12..2026-08-19 across 7
+# syncs, ending with 285/470 headings naming ids graph.json no longer has).
+# The report is still NEVER auto-overwritten — only the MESSAGE escalates.
+
+echo "--- F. persistent-freeze escalation ---"
+
+# A graph.json whose nodes carry community ids $2..$3.
+make_graph() { # file first last
+  local f="$1" first="$2" last="$3" i sep=""
+  {
+    printf '{"nodes":['
+    for ((i = first; i <= last; i++)); do
+      printf '%s{"id":"n%d","community":%d}' "$sep" "$i" "$i"
+      sep=","
+    done
+    printf '],"links":[]}\n'
+  } >"$f"
+}
+
+# Fresh sandbox whose report copy is guaranteed to be REFUSED (dst 10 named,
+# incoming 2 named / 8 generic), with graph ids $2..$3 on both sides.
+new_freeze_box() { # graph_first graph_last
+  local box; box="$(new_sandbox)"
+  make_report "$box/$DST_REL" 10 0 "Vault Label"
+  make_report "$box/$SRC_REL" 2 8 "Rebuild Label"
+  make_graph "$box/repos/demorepo/graphify-out/graph.json" "$1" "$2"
+  echo "$box"
+}
+
+# Make the source graph differ from the mirrored copy again, so a second run is
+# not short-circuited by the up-to-date cmp (a real re-cluster changes it too).
+rebuild_graph() { # box first last
+  make_graph "$1/repos/demorepo/graphify-out/graph.json" "$2" "$3"
+  printf '\n' >>"$1/repos/demorepo/graphify-out/graph.json"
+}
+
+# --- F1. a REPEATED refusal escalates; the first one does not -------------
+box="$(new_freeze_box 1 10)"
+cp "$box/$DST_REL" "$box/dst.before"
+status="$(run_sync "$box")"
+first_err="$(cat "$box/err.txt")"
+if grep -qi 'consecutive' "$box/err.txt"; then
+  fail "freeze/first-refusal-does-not-claim-consecutive" \
+    "the first refusal must not talk about consecutive/repeated freezes" \
+    "stderr: [$first_err]"
+else
+  pass "freeze/first-refusal-does-not-claim-consecutive"
+fi
+
+rebuild_graph "$box" 1 10
+status="$(run_sync "$box")"
+if grep -qi 'consecutive' "$box/err.txt" && grep -qE '(^|[^0-9])2([^0-9]|$)' "$box/err.txt"; then
+  pass "freeze/repeated-refusal-escalates"
+else
+  fail "freeze/repeated-refusal-escalates" \
+    "the 2nd consecutive refusal must say so (count + the word 'consecutive')" \
+    "exit: $status" "stderr: [$(cat "$box/err.txt")]"
+fi
+assert_files_identical "freeze/escalation-still-does-not-overwrite-report" \
+  "$box/dst.before" "$box/$DST_REL"
+
+# --- F2. a refusal whose frozen report no longer matches graph.json says so -
+# The frozen report names ids 1..10; the graph has re-clustered to 900..909.
+box="$(new_freeze_box 900 909)"
+cp "$box/$DST_REL" "$box/dst.before"
+status="$(run_sync "$box")"
+if grep -qi 'obsolete clustering' "$box/err.txt"; then
+  pass "freeze/stale-ids-are-named-as-obsolete-clustering"
+else
+  fail "freeze/stale-ids-are-named-as-obsolete-clustering" \
+    "a frozen report whose ids are absent from graph.json must be called obsolete" \
+    "exit: $status" "stderr: [$(cat "$box/err.txt")]"
+fi
+if grep -qF '/brain:label' "$box/err.txt"; then
+  pass "freeze/stale-message-names-the-remedy"
+else
+  fail "freeze/stale-message-names-the-remedy" \
+    "the obsolete-clustering message must name the concrete remedy (/brain:label)" \
+    "stderr: [$(cat "$box/err.txt")]"
+fi
+assert_files_identical "freeze/stale-report-is-still-not-overwritten" \
+  "$box/dst.before" "$box/$DST_REL"
+
+# --- F3. matching ids must NOT be called obsolete -------------------------
+# The guard against a warning that always fires (id type coercion, empty graph).
+box="$(new_freeze_box 1 10)"
+status="$(run_sync "$box")"
+if grep -qi 'obsolete' "$box/err.txt"; then
+  fail "freeze/matching-ids-are-not-called-obsolete" \
+    "the report's ids are all present in graph.json; nothing is obsolete" \
+    "stderr: [$(cat "$box/err.txt")]"
+else
+  pass "freeze/matching-ids-are-not-called-obsolete"
+fi
+
+# An empty graph proves nothing either way — no claim.
+box="$(new_freeze_box 1 0)"   # first > last => zero nodes
+status="$(run_sync "$box")"
+if grep -qi 'obsolete' "$box/err.txt"; then
+  fail "freeze/empty-graph-makes-no-obsolete-claim" \
+    "a graph with no communities cannot demonstrate obsolescence" \
+    "stderr: [$(cat "$box/err.txt")]"
+else
+  pass "freeze/empty-graph-makes-no-obsolete-claim"
+fi
+
+# --- F4. the counter is CONSECUTIVE: a successful copy resets it ----------
+box="$(new_freeze_box 1 10)"
+status="$(run_sync "$box")"                       # refusal #1
+rebuild_graph "$box" 1 10
+make_report "$box/$SRC_REL" 40 0 "Rebuild Label"  # now allowed (40 >= 10)
+status="$(run_sync "$box")"
+rebuild_graph "$box" 1 10
+make_report "$box/$DST_REL" 60 0 "Vault Label"    # freeze again
+make_report "$box/$SRC_REL" 2 8 "Rebuild Label"
+status="$(run_sync "$box")"                       # refusal #1 again, not #2
+if grep -qi 'consecutive' "$box/err.txt"; then
+  fail "freeze/successful-copy-resets-the-counter" \
+    "an allowed copy in between must reset the consecutive-refusal count" \
+    "stderr: [$(cat "$box/err.txt")]"
+else
+  pass "freeze/successful-copy-resets-the-counter"
+fi
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"

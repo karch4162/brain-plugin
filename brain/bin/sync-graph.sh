@@ -44,7 +44,11 @@
 # `node bin/label-guard.mjs --may-replace`, and it FAILS CLOSED: if node is
 # missing, the module is broken, or the answer is anything we do not recognise,
 # the existing report is KEPT and the sync says so on stderr. graph.json and
-# manifest.json still mirror.
+# manifest.json still mirror. A freeze is never permanent-and-silent (INNOV-288):
+# consecutive refusals are counted in <vault>/.brain/ and the message escalates,
+# and once the frozen report's community ids no longer match the mirrored
+# graph.json the sync says the report describes an obsolete clustering and names
+# the remedy. It still never auto-overwrites — the decision stays human.
 #
 # SCOPE AUDIT (INNOV-267/268): before a mirror is published, its graph is checked
 # against the standard scope by bin/scope-audit.mjs, in BOTH directions — nodes
@@ -257,6 +261,58 @@ label_guard_verdict() { # existing_report incoming_report
   return 0
 }
 
+
+# --- FREEZE VISIBILITY (INNOV-288) ------------------------------------------
+#
+# The label guard above is correct in isolation and has no reconciliation path
+# and no expiry: once it starts refusing it refuses forever, with the same
+# one-line message every time. Measured in personal-brain, a report sat frozen
+# from 2026-08-12 to 2026-08-19 across 7 graph.json syncs, ending with 285 of
+# 470 headings naming community ids graph.json no longer had — and the user saw
+# no warning in that window, because "refused again" looks exactly like
+# "refused once".
+#
+# So the refusal STAYS (the human decision to relabel or discard is not ours to
+# make), but it becomes visible and escalating:
+#   - a consecutive-refusal counter per mirror, machine-local under <vault>/.brain/
+#     beside session.json and hot.pin, reset by any successful report copy;
+#   - once the frozen report's community ids demonstrably no longer match the
+#     graph.json we just mirrored, an explicit statement that the report now
+#     describes an OBSOLETE CLUSTERING, plus the concrete remedy.
+# Both are advisory text only. Every write is best-effort and every parse is
+# validated: a broken counter must never abort a sync under `set -e`, and must
+# never change the copy verdict — `--may-replace` remains the only gate.
+FREEZE_DIR="$VAULT/.brain"
+
+freeze_file() { # mirror_name
+  printf '%s/label-freeze-%s.count' "$FREEZE_DIR" \
+    "$(printf '%s' "$1" | sed 's/[^A-Za-z0-9._-]/_/g')"
+}
+
+freeze_bump() { # mirror_name -> echoes the new consecutive count (>= 1)
+  local f prev
+  f="$(freeze_file "$1")"
+  mkdir -p "$FREEZE_DIR" 2>/dev/null || true
+  prev="$(cat "$f" 2>/dev/null || echo 0)"
+  [[ "$prev" =~ ^[0-9]+$ ]] || prev=0
+  prev=$((prev + 1))
+  printf '%s\n' "$prev" >"$f" 2>/dev/null || true
+  printf '%s\n' "$prev"
+}
+
+freeze_clear() { rm -f "$(freeze_file "$1")" 2>/dev/null || true; }
+
+# Does the preserved report still describe the mirrored graph? Echoes
+# `<missing> <total>` community ids, or `unknown` when nothing can be concluded
+# (no node carries a community, either file unreadable, node/module broken).
+# The comparison itself lives in label-guard.mjs, shared with /brain:label's
+# membership-staleness check — one definition, as with the count rule.
+freeze_staleness() { # report_path graph_path
+  local out
+  out="$(node "$LABEL_GUARD" --stale "$1" "$2" 2>/dev/null || true)"
+  if [[ "$out" =~ ^[0-9]+[[:space:]]+[0-9]+$ ]]; then printf '%s\n' "$out"; else printf 'unknown\n'; fi
+}
+
 # --- THE SCOPE GATE (INNOV-267 + INNOV-268) ---------------------------------
 #
 # The vault records a SCOPE per repo but nothing implemented it. graphify scans
@@ -448,8 +504,29 @@ for repo in "${repos[@]}"; do
       <<<"$(label_guard_verdict "$dst/$name-GRAPH_REPORT.md" "$src/GRAPH_REPORT.md")" || true
     if [[ "$guard_verdict" == "allow" ]]; then
       cp "$src/GRAPH_REPORT.md" "$dst/$name-GRAPH_REPORT.md"
+      freeze_clear "$name"
     elif [[ "$guard_verdict" == "refuse" ]]; then
+      freeze_n="$(freeze_bump "$name")"
       echo "preserving labeled report for $name: incoming has $incoming_named named communities, existing has $existing_named — run /brain:label $name to refresh labels" >&2
+      if [[ "$freeze_n" =~ ^[0-9]+$ && "$freeze_n" -ge 2 ]]; then
+        {
+          echo "  FROZEN $freeze_n consecutive syncs: $name's vault report has now been preserved $freeze_n times in a row."
+          echo "  Nothing expires this guard — it will keep refusing until you act. Either run"
+          echo "  /brain:label $name to relabel from the CURRENT graph (the next sync then copies),"
+          echo "  or delete $dst/$name-GRAPH_REPORT.md if its labels are no longer worth keeping."
+        } >&2
+      fi
+      stale_missing=""; stale_total=""
+      read -r stale_missing stale_total <<<"$(freeze_staleness "$dst/$name-GRAPH_REPORT.md" "$dst/graph.json")" || true
+      if [[ "$stale_missing" =~ ^[0-9]+$ && "$stale_missing" -gt 0 ]]; then
+        {
+          echo "  OBSOLETE CLUSTERING: $stale_missing of $stale_total community ids named in the preserved"
+          echo "  report are absent from the graph.json just mirrored. graphify re-mints community ids on"
+          echo "  every rebuild, so the report you are keeping is describing clusters that no longer exist —"
+          echo "  the guard is now protecting stale text, not labels. Remedy: run /brain:label $name to"
+          echo "  re-derive the labels against the current graph.json."
+        } >&2
+      fi
       # INNOV-262: queue the regression for auto-filing (not on the error path —
       # "guard could not run" is this machine's tooling, not a plugin defect).
       BRAIN_ROOT="$VAULT" bash "$SCRIPT_DIR/file-finding.sh" label-count-regression "$name" \

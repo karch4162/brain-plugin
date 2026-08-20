@@ -546,6 +546,107 @@ assert_eq "shared/fully-named-mirror-survives-a-thin-labels-file" \
   "$fully_named" "$(guard_count "$box/$REPORT_REL")" \
   "exit: $status" "stderr: [$(cat "$box/err.txt")]"
 
+# ================================================================= PART G ===
+# INNOV-2xx — staleness is CLUSTER IDENTITY, not name genericness.
+#
+# graphify re-mints community ids on every rebuild, so a report can be fully
+# non-generic while every name describes a cluster that no longer exists.
+# Measured 2026-08-19: a mirror whose report had 470 headings against 185
+# graph.json communities, 285 of them naming ids absent from graph.json, and
+# community 34 named "route.test & related (3)" while holding an entirely
+# different node set. The old "generic name => needs labeling" test called that
+# state fully labeled, so /brain:label reported "already labeled, 0 batches" —
+# the remedy its own guard prescribes was a guaranteed no-op.
+#
+# Contract: a heading whose id is absent from graph.json is stale; a heading
+# whose stated members overlap graph.json's members for that id below the
+# threshold is stale. Stale ids are NOT preserved and DO appear in the work
+# order. A genuinely current non-generic label is still never overwritten.
+
+echo "--- G. stale-cluster detection (id/member drift) ---"
+
+# Every graph id carries a non-generic heading, but the member lists belong to
+# a previous clustering; ids 90/91 are headings for communities that no longer
+# exist at all. Nothing here is generic, so the old check saw "nothing to do".
+write_stale_mirror() { # box
+  local dir="$1/vault/graphify/demo"
+  mkdir -p "$dir"
+  printf '%s\n' "$GRAPH_JSON" >"$dir/graph.json"
+  {
+    printf '# Graph Report - graphify/demo/graph.json\n\n'
+    printf '## Summary\n- 10 nodes - 2 edges - 6 communities\n\n'
+    printf '## Community Hubs (Navigation)\n'
+    printf -- '- [[_COMMUNITY_Legacy Zero|Legacy Zero]]\n\n'
+    printf '## Communities\n'
+    local i
+    for i in 0 1 2 3 4 5 90 91; do
+      printf '### Community %s - "Legacy Cluster %s"\n' "$i" "$i"
+      printf 'Cohesion: 0.04\n'
+      printf 'Nodes (3): zz%s_1, zz%s_2, zz%s_3\n\n' "$i" "$i" "$i"
+    done
+  } >"$dir/demo-GRAPH_REPORT.md"
+}
+
+box="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+write_stale_mirror "$box"
+
+# Fixture guard: the report really is fully non-generic (8 named headings).
+assert_eq "stale/fixture-is-fully-non-generic" "8" "$(guard_count "$box/$REPORT_REL")" \
+  "report: [$(cat "$box/$REPORT_REL")]"
+
+status="$(run_label "$box" --digest demo)"
+assert_eq "stale/digest-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+cp "$box/out.txt" "$box/digest.json"
+
+assert_eq "stale/work-order-is-not-empty" "true" \
+  "$(jexpr "$box/digest.json" 'd[0].batches.length > 0 && d[0].batches[0].length > 0')" \
+  "digest: [$(head -c 800 "$box/digest.json")]"
+assert_eq "stale/every-drifted-id-is-namable" "0,1,2,3,4,5" \
+  "$(jexpr "$box/digest.json" 'Object.keys(d[0].labels_template).map(Number).sort((a,b)=>a-b).join(",")')" \
+  "digest: [$(head -c 800 "$box/digest.json")]"
+assert_eq "stale/drifted-labels-not-counted-preserved" "0" \
+  "$(jexpr "$box/digest.json" 'Object.keys(d[0].preserved).length')" \
+  "digest: [$(head -c 800 "$box/digest.json")]"
+assert_eq "stale/headings-absent-from-graph-are-reported" "90,91" \
+  "$(jexpr "$box/digest.json" '(d[0].stale_headings||[]).map(Number).sort((a,b)=>a-b).join(",")')" \
+  "digest: [$(head -c 800 "$box/digest.json")]"
+
+# ...and --apply actually re-names them (the stale label is gone).
+status="$(run_apply "$box" '{"0":"Checkout Flow","1":"Auth Middleware","2":"Payments Core","3":"Sync Worker","4":"Alpha Utils","5":"Beta Utils"}')"
+assert_eq "stale/apply-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+assert_grep "stale/stale-heading-renamed" '### Community 0 - "Checkout Flow"' "$box/$REPORT_REL" \
+  "report: [$(cat "$box/$REPORT_REL")]"
+assert_not_grep "stale/stale-label-gone" 'Legacy Cluster 0' "$box/$REPORT_REL"
+
+# ...and run two must be idempotent: a heading renamed out of staleness must
+# carry the CURRENT member list, or the next digest re-flags it forever.
+status="$(run_label "$box" --digest demo)"
+assert_eq "stale/run2-digest-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+cp "$box/out.txt" "$box/digest2.json"
+assert_eq "stale/run2-fresh-label-preserved" "Checkout Flow" \
+  "$(jexpr "$box/digest2.json" "d[0].preserved['0']")" \
+  "digest: [$(head -c 800 "$box/digest2.json")]" "report: [$(cat "$box/$REPORT_REL")]"
+assert_eq "stale/run2-work-order-empty" "0" \
+  "$(jexpr "$box/digest2.json" 'd[0].batches.length + Object.keys(d[0].labels_template).length')" \
+  "digest: [$(head -c 800 "$box/digest2.json")]"
+assert_eq "stale/run2-absent-headings-still-reported" "90,91" \
+  "$(jexpr "$box/digest2.json" '(d[0].stale_headings||[]).map(Number).sort((a,b)=>a-b).join(",")')"
+
+# --- G2. a CURRENT non-generic label is still never overwritten -------------
+# Same hard rule as before: the fixture mirror's members match graph.json, so
+# "Payments Core" is current, not stale, and survives an --apply that renames it.
+box="$(new_box)"
+status="$(run_label "$box" --digest demo)"
+cp "$box/out.txt" "$box/digest.json"
+assert_eq "stale/current-label-still-preserved" "Payments Core" \
+  "$(jexpr "$box/digest.json" "d[0].preserved['2']")" \
+  "digest: [$(head -c 600 "$box/digest.json")]"
+assert_eq "stale/current-mirror-has-no-stale-headings" "" \
+  "$(jexpr "$box/digest.json" '(d[0].stale_headings||[]).join(",")')"
+status="$(run_apply "$box" '{"2":"Should Not Win","1":"Auth Middleware"}')"
+assert_grep "stale/current-label-survives-apply" '### Community 2 - "Payments Core"' "$box/$REPORT_REL"
+assert_not_grep "stale/current-label-not-clobbered" "Should Not Win" "$box/$REPORT_REL"
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"

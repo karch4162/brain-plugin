@@ -27,9 +27,11 @@
 //   - An existing non-generic label is never changed (preserved > agent > derived).
 //   - graph.json is never written. communities/ is never written — that dir is
 //     owned (and wholesale-regenerated) by build-community-notes.mjs.
-//   - An existing report is transformed IN PLACE: only generic headings and hub
-//     links change; every other line survives byte-identical. Communities the
-//     report omitted (thin ones) are appended in their own section.
+//   - An existing report is transformed IN PLACE: only generic headings, STALE
+//     headings (a name whose stated members no longer match graph.json's cluster
+//     for that id — see isStale) plus their member lines, and hub links change;
+//     every other line survives byte-identical. Communities the report omitted
+//     (thin ones) are appended in their own section.
 //   - Deterministic: same graph + same labels file → same report.
 //
 // Usage:
@@ -142,8 +144,9 @@ function readMirror(repo) {
   // id (number) → label as written. Parsed by the shared module so this script
   // and sync-graph.sh cannot disagree about which lines are community headings.
   const reportLabels = report !== null ? readReportLabels(report) : new Map();
+  const reportMembers = report !== null ? readReportMembers(report) : new Map();
   return {
-    dir, reportPath, report, reportLabels, members, degree,
+    dir, reportPath, report, reportLabels, reportMembers, members, degree,
     provenance: readProvenance(dir),
     nodeCount: nodes.length, linkCount: links.length,
   };
@@ -169,6 +172,56 @@ function readProvenance(dir) {
   return out;
 }
 
+// id (number) → the member names the report STATES for that id, from the
+// `Nodes (n): a, b, c (+k more)` line under each heading. Line-scanned rather
+// than regex-paired because graphify slips a `Cohesion:` line in between.
+function readReportMembers(text) {
+  const out = new Map();
+  if (typeof text !== 'string') return out;
+  let id = null;
+  for (const line of text.split(/\r?\n/)) {
+    const h = /^### Community (\d+) - "/.exec(line);
+    if (h) { id = Number(h[1]); continue; }
+    if (id === null) continue;
+    const n = /^Nodes \(\d+\): (.*)$/.exec(line);
+    if (!n) continue;
+    out.set(id, n[1].replace(/\s*\(\+\d+ more\)\s*$/, '').split(',').map((x) => x.trim()).filter(Boolean));
+    id = null;
+  }
+  return out;
+}
+
+// Fraction of a heading's stated members that must still be in graph.json's
+// cluster of that id for the heading's name to describe a cluster that exists.
+// ponytail: flat 0.5 over the <=12 members a report samples. Measured across 19
+// real mirrors: current ones score 1.0 almost everywhere, the known-stale
+// tray_pos_flutter scores below 0.5 on 418 of 433 headings — nothing sits near
+// the line. Make it a per-mirror knob only if a mirror ever lands there.
+const STALE_OVERLAP = 0.5;
+
+// Does this id's heading still describe the cluster graph.json holds?
+//
+// THE PROBLEM (2026-08-19): graphify re-mints community ids on every rebuild, so
+// a report can be FULLY non-generic while every name describes a cluster that no
+// longer exists — measured: 470 headings vs 185 communities, 285 headings naming
+// ids absent from graph.json, and community 34 named "route.test & related (3)"
+// over a completely different node set. Genericness cannot see any of that, so
+// /brain:label answered "already labeled, 0 batches" in exactly the state its own
+// refusal message tells you to fix. Identity can see it: compare the members the
+// heading states against the members the id actually holds now.
+//
+// Fail-safe: a heading with no parseable member line is NOT called stale (we know
+// nothing about it, and the standing rule is to preserve).
+function isStale(m, id) {
+  const stated = m.reportMembers.get(id);
+  if (!stated || stated.length === 0) return false;
+  const actual = m.members.get(id);
+  if (!actual) return true; // id no longer exists in graph.json
+  const now = new Set(actual.map(nodeKey));
+  const hit = stated.filter((s) => now.has(s)).length;
+  return hit / stated.length < STALE_OVERLAP;
+}
+
 // Is this id's existing report label off-limits?
 //
 // The old rule was "any non-generic label is preserved", which cannot tell a
@@ -185,6 +238,9 @@ function isPreserved(m, id, existing) {
   // "Is this a name at all?" is the shared question (label-guard.isNamedLabel).
   // "Is that name off-limits?" is this script's own, provenance-aware answer.
   if (!isNamedLabel(existing)) return false;
+  // A name for a cluster that no longer exists is not work worth preserving,
+  // whatever the sidecar says about who wrote it.
+  if (isStale(m, id)) return false;
   const rec = m.provenance.get(id);
   if (!rec || rec.provenance !== 'derived') return true;
   return nameKey(rec.name ?? '') !== nameKey(existing);
@@ -261,12 +317,24 @@ function classify(repo, m) {
   // labels_template is the labels file, minus the values (INNOV-263 c).
   const labels_template = {};
   for (const { id } of llm) labels_template[id] = '';
-  return { repo, total: m.members.size, preserved, derived, batches, labels_key_form: LABELS_KEY_FORM, labels_template };
+  // Headings for ids graph.json no longer has. They are stale by definition, but
+  // there is nothing left to name — reported, not batched. Deliberately NOT
+  // deleted from the report: dropping them would push the named count below the
+  // one the INNOV-274 write-time invariant compares against, and the write would
+  // refuse. They fall out on the next repo-side rebuild.
+  const stale_headings = [...m.reportLabels.keys()].filter((id) => !m.members.has(id)).sort((a, b) => a - b);
+  return { repo, total: m.members.size, preserved, derived, batches, stale_headings, labels_key_form: LABELS_KEY_FORM, labels_template };
 }
 
 // ---- report writing ----------------------------------------------------------
 
 const hubLink = (label) => `[[_COMMUNITY_${label}|${label}]]`; // raw label — build-community-notes aliases it to the sanitized filename
+
+// The member line under a community heading — one definition, because a stale
+// heading's line is REWRITTEN from it and must come out in the same shape the
+// appended/generated ones go in.
+const nodesLine = (nodes) =>
+  `Nodes (${nodes.length}): ${nodes.slice(0, 12).map(nodeKey).join(', ')}${nodes.length > 12 ? ` (+${nodes.length - 12} more)` : ''}`;
 
 function transformReport(m, finalLabels, preservedIds) {
   // In-place: rename renamable headings + their hub links; append omitted ids.
@@ -287,10 +355,30 @@ function transformReport(m, finalLabels, preservedIds) {
     for (const [id, label] of appended) {
       const nodes = m.members.get(id) ?? [];
       L.push(`### Community ${id} - "${label}"`);
-      L.push(`Nodes (${nodes.length}): ${nodes.slice(0, 12).map(nodeKey).join(', ')}${nodes.length > 12 ? ` (+${nodes.length - 12} more)` : ''}`);
+      L.push(nodesLine(nodes));
       L.push('');
     }
     text = text.replace(/\n*$/, '\n') + L.join('\n') + '\n';
+  }
+
+  // A stale heading was just renamed for the cluster graph.json holds NOW, but it
+  // still lists the members of the clustering it came from — wrong documentation,
+  // and worse, the next --digest would read those old members, score the overlap
+  // at zero again and re-flag the name this run just minted. So refresh the member
+  // line for stale ids only; every other line stays byte-identical.
+  const staleIds = new Set([...m.members.keys()].filter((id) => !preservedIds.has(id) && isStale(m, id)));
+  if (staleIds.size) {
+    const lines = text.split('\n');
+    let cur = null;
+    for (let i = 0; i < lines.length; i++) {
+      const h = /^### Community (\d+) - "/.exec(lines[i]);
+      if (h) { cur = staleIds.has(Number(h[1])) ? Number(h[1]) : null; continue; }
+      if (cur === null) continue;
+      if (!/^Nodes \(\d+\): /.test(lines[i])) continue;
+      lines[i] = nodesLine(m.members.get(cur) ?? []) + (lines[i].endsWith('\r') ? '\r' : '');
+      cur = null;
+    }
+    text = lines.join('\n');
   }
 
   // ---- INNOV-264: rewrite the LINK LIST, not just the detail headings -------
@@ -335,7 +423,7 @@ function generateReport(repo, m, finalLabels, date) {
   for (const id of ids) {
     const nodes = m.members.get(id);
     L.push(`### Community ${id} - "${finalLabels[id]}"`);
-    L.push(`Nodes (${nodes.length}): ${nodes.slice(0, 12).map(nodeKey).join(', ')}${nodes.length > 12 ? ` (+${nodes.length - 12} more)` : ''}`);
+    L.push(nodesLine(nodes));
     L.push('');
   }
   return L.join('\n') + '\n';
