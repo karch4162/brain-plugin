@@ -1111,6 +1111,78 @@ else
   pass "freeze/successful-copy-resets-the-counter"
 fi
 
+# ========================================== PART G: LIVE-SESSION COMMIT GUARD ==
+# SPO-324. A save is ONE commit. /brain:save step 5 runs this script and is
+# DOCUMENTED to pass --no-commit, because graphify/ is on .saveinclude and step
+# 6's single vault-commit.sh carries the mirrors. That documentation is prose.
+# An agent on an older or different SKILL.md drops the flag, this script commits,
+# HEAD moves past the session's recorded pin, and step 6 then refuses every save
+# in which a covered repo's source changed — observed on brain 0.2.33 on
+# 2026-08-18 and 2026-08-19, days after the flag fix shipped in 0.2.34. The
+# script now defaults the flag from observable state: any live session record
+# suppresses its self-commit.
+#
+# The negative controls carry as much weight as the positive case. If a vault
+# with no record, or with only a stale one, stopped committing, we would have
+# broken the standalone behaviour --no-commit exists to switch off.
+SESSION_SH="$REPO_ROOT/brain/bin/session.sh"
+
+# --- 31. NEGATIVE CONTROL: no session record => standalone sync still commits -
+new_multi_sandbox_on_branch "work/session-guard"
+printf '{"nodes":["alpha","alpha2"],"links":[]}\n' >"$MBOX/repos/alpha/graphify-out/graph.json"
+rm -rf "$MBOX/vault/.brain"
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+status="$(run_sync_ex "$MBOX")"
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+if [[ "$head_before" == "$head_after" ]]; then
+  fail "session-guard/no-record-still-commits" \
+    "with no session record a standalone sync must still commit for itself" \
+    "exit: [$status]" "stdout: [$(cat "$MBOX/out.txt")]" "stderr: [$(cat "$MBOX/err.txt")]"
+else
+  pass "session-guard/no-record-still-commits"
+fi
+
+# --- 32. a LIVE session record suppresses the self-commit --------------------
+new_multi_sandbox_on_branch "work/session-guard"
+printf '{"nodes":["alpha","alpha2"],"links":[]}\n' >"$MBOX/repos/alpha/graphify-out/graph.json"
+BRAIN_ROOT="$MBOX/vault" CLAUDE_CODE_SESSION_ID="sync-guard-live" \
+  bash "$SESSION_SH" --start save >"$MBOX/session.txt" 2>&1 || true
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+status="$(run_sync_ex "$MBOX")"
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+assert_eq "session-guard/live-record-head-unchanged" "$head_before" "$head_after" \
+  "exit: [$status]" "session: [$(cat "$MBOX/session.txt")]" "output: [$(cat "$MBOX/all.txt")]"
+if grep -q "commit suppressed" "$MBOX/all.txt"; then
+  pass "session-guard/live-record-announces-the-skip"
+else
+  fail "session-guard/live-record-announces-the-skip" \
+    "a suppressed commit must be announced, never silent" \
+    "output: [$(cat "$MBOX/all.txt")]"
+fi
+assert_eq "session-guard/live-record-exit-0" "0" "$status" \
+  "suppressing the commit is not a failure — the mirrors were still written" \
+  "output: [$(cat "$MBOX/all.txt")]"
+
+# --- 33. a STALE record must not disable standalone commits forever ----------
+# A crashed session leaves its record behind. If staleness were ignored, that
+# vault could never self-commit a sync again.
+new_multi_sandbox_on_branch "work/session-guard"
+printf '{"nodes":["alpha","alpha2"],"links":[]}\n' >"$MBOX/repos/alpha/graphify-out/graph.json"
+BRAIN_ROOT="$MBOX/vault" CLAUDE_CODE_SESSION_ID="sync-guard-stale" \
+  bash "$SESSION_SH" --start save >"$MBOX/session.txt" 2>&1 || true
+head_before="$(git -C "$MBOX/vault" rev-parse HEAD)"
+export BRAIN_SESSION_STALE_SECS=0
+status="$(run_sync_ex "$MBOX")"
+unset BRAIN_SESSION_STALE_SECS
+head_after="$(git -C "$MBOX/vault" rev-parse HEAD)"
+if [[ "$head_before" == "$head_after" ]]; then
+  fail "session-guard/stale-record-still-commits" \
+    "a crashed session's leftover record must not disable standalone commits" \
+    "exit: [$status]" "stdout: [$(cat "$MBOX/out.txt")]" "stderr: [$(cat "$MBOX/err.txt")]"
+else
+  pass "session-guard/stale-record-still-commits"
+fi
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"
