@@ -572,6 +572,47 @@ done
 # refuse — deliberately. "The sync may commit graph mirrors" is a statement about
 # what the vault permits, so it belongs in the vault's allowlist, not hardcoded
 # in the syncer. The shipped template lists both.
+# --- a save is ONE commit: never self-commit under a live session (SPO-324) ---
+# This is NOT a commit-safety rule, and must not be relocated into
+# vault-commit.sh. INNOV-275 moved the safety guards (open-PR, protected branch,
+# HEAD-pin re-check) there and they stay there: vault-commit.sh owns "is this
+# commit safe". This block is the caller answering "do I want one at all" —
+# exactly what --no-commit has always been. We default that flag from observable
+# state instead of trusting a step in skills/save/SKILL.md to remember it.
+#
+# Why prose was not enough: /brain:save step 5 runs this script and is documented
+# (SKILL.md, step 5) to pass --no-commit, because graphify/ is on .saveinclude
+# and step 6's single vault-commit.sh carries the mirrors — one commit per save,
+# pin valid end to end. An agent running an older or different SKILL.md drops the
+# flag; this script then commits, HEAD moves past the session's recorded pin, and
+# step 6 refuses every save in which a covered repo's source changed. That is not
+# hypothetical: sessions on brain 0.2.33 did it on 2026-08-18 and 2026-08-19,
+# days after the flag fix shipped in 0.2.34 (Linear SPO-324). Everything enforced
+# by prose drifts; this now cannot.
+#
+# ANY live session suppresses the commit, not merely another agent's — the pin
+# that would be stranded is usually THIS session's own. With no live record a
+# standalone sync still commits for itself, exactly as documented above.
+if [[ ${#synced[@]} -gt 0 && $COMMIT -eq 1 ]]; then
+  if session_status="$(BRAIN_ROOT="$VAULT" bash "$SCRIPT_DIR/session.sh" --status 2>/dev/null)"; then
+    live_n="$(printf '%s\n' "$session_status" | grep -c '^  live  session ' || true)"
+    if [[ "${live_n:-0}" -gt 0 ]]; then
+      live_who="$(printf '%s\n' "$session_status" | grep '^  live  session ' | head -n 1 | sed 's/^  live  //')"
+      COMMIT=0
+      FORCE_COMMIT=0
+      echo "SYNC: OK - mirrors written, commit suppressed ($live_n live session(s))"
+      echo "  live: ${live_who:-?}"
+      echo "  A commit here would move HEAD past that session's pin and its own"
+      echo "  commit step would then refuse. graphify/ is on .saveinclude, so the"
+      echo "  session's single commit carries these mirrors."
+    fi
+  else
+    # Fail OPEN, and say so. A vault with no .brain/, no record, or a status this
+    # script could not obtain must never silently cancel a standalone commit.
+    echo "SYNC: SKIPPED live-session check - session.sh could not report status; committing as asked" >&2
+  fi
+fi
+
 if [[ ${#synced[@]} -gt 0 && $COMMIT -eq 1 ]]; then
   vc_args=(-m "Sync graph mirror(s): ${synced[*]}")
   # Only pin when we actually read a branch+SHA at start; a non-git vault has
