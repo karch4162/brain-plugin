@@ -73,7 +73,7 @@ import { foldLabel, nameKey } from './community-name.mjs';
 // INNOV-274: "what counts as a named label" is NOT defined here any more — it is
 // defined once in label-guard.mjs and shared with sync-graph.sh's copy-time
 // guard, which used to carry its own grep-shaped copy of the same idea.
-import { isNamedLabel, readReportLabels, countNamedLabels } from './label-guard.mjs';
+import { isNamedLabel, readReportLabels } from './label-guard.mjs';
 
 const argv = process.argv.slice(2);
 const argVal = (flag) => (argv.indexOf(flag) >= 0 ? argv[argv.indexOf(flag) + 1] : undefined);
@@ -318,10 +318,8 @@ function classify(repo, m) {
   const labels_template = {};
   for (const { id } of llm) labels_template[id] = '';
   // Headings for ids graph.json no longer has. They are stale by definition, but
-  // there is nothing left to name — reported, not batched. Deliberately NOT
-  // deleted from the report: dropping them would push the named count below the
-  // one the INNOV-274 write-time invariant compares against, and the write would
-  // refuse. They fall out on the next repo-side rebuild.
+  // there is nothing left to name — reported here, and DELETED by --apply
+  // (SPO-345; transformReport).
   const stale_headings = [...m.reportLabels.keys()].filter((id) => !m.members.has(id)).sort((a, b) => a - b);
   return { repo, total: m.members.size, preserved, derived, batches, stale_headings, labels_key_form: LABELS_KEY_FORM, labels_template };
 }
@@ -335,6 +333,8 @@ const hubLink = (label) => `[[_COMMUNITY_${label}|${label}]]`; // raw label — 
 // appended/generated ones go in.
 const nodesLine = (nodes) =>
   `Nodes (${nodes.length}): ${nodes.slice(0, 12).map(nodeKey).join(', ')}${nodes.length > 12 ? ` (+${nodes.length - 12} more)` : ''}`;
+
+const ADDITIONAL_HEADER = '## Additional communities (labeled vault-side)';
 
 function transformReport(m, finalLabels, preservedIds) {
   // In-place: rename renamable headings + their hub links; append omitted ids.
@@ -351,7 +351,12 @@ function transformReport(m, finalLabels, preservedIds) {
   }
   if (appended.length) {
     appended.sort((a, b) => (m.members.get(b[0])?.length ?? 0) - (m.members.get(a[0])?.length ?? 0));
-    const L = ['', '## Additional communities (labeled vault-side)', ''];
+    // SPO-346: this section is always the LAST thing in the report (only this
+    // script writes it, only ever at EOF), so a run that finds the header
+    // already there appends its entries under it instead of minting a second
+    // header — observed 1→2 duplicate headers after two --apply runs that each
+    // had new thin ids.
+    const L = text.includes(`\n${ADDITIONAL_HEADER}\n`) ? [''] : ['', ADDITIONAL_HEADER, ''];
     for (const [id, label] of appended) {
       const nodes = m.members.get(id) ?? [];
       L.push(`### Community ${id} - "${label}"`);
@@ -359,6 +364,36 @@ function transformReport(m, finalLabels, preservedIds) {
       L.push('');
     }
     text = text.replace(/\n*$/, '\n') + L.join('\n') + '\n';
+  }
+
+  // ---- SPO-345: DELETE headings for ids graph.json no longer has -----------
+  // --digest reports these as stale_headings, but this loop only ever visited
+  // finalLabels (live ids), so an orphan `### Community 108 - "..."` block was
+  // never touched and rendered as a confident, valid heading on every run —
+  // 285 of 470 headings on the measured mirror. Remove each orphan block (the
+  // heading line through the line before the next `### `/`## ` heading or EOF),
+  // drop link entries that pointed at an orphan's label and nothing else, and
+  // restate the `## Communities (N total, ...)` count over live ids. The
+  // INNOV-274 write guard below compares live ids only, so this cannot trip it.
+  const orphanIds = new Set([...m.reportLabels.keys()].filter((id) => !m.members.has(id)));
+  if (orphanIds.size) {
+    const kept = [];
+    let dropping = false;
+    for (const line of text.split('\n')) {
+      const h = /^### Community (\d+) - "/.exec(line);
+      if (h) dropping = orphanIds.has(Number(h[1]));
+      else if (/^## /.test(line)) dropping = false;
+      if (!dropping) kept.push(line);
+    }
+    text = kept.join('\n');
+    // A label is orphaned only if NO live id carries it (ids get re-minted, and a
+    // name can legitimately move to a new id).
+    const liveLabels = new Set([...readReportLabels(text).values()].map(nameKey));
+    const orphanLabels = [...orphanIds].map((id) => m.reportLabels.get(id)).filter((l) => !liveLabels.has(nameKey(l)));
+    for (const l of orphanLabels) text = text.replaceAll(hubLink(l), '');
+    text = text.split('\n').filter((line) => !/^-\s*\r?$/.test(line)).join('\n');
+    text = text.replace(/^## Communities \(\d+ total(, \d+ thin omitted)?\)/m, (_w, thin) =>
+      `## Communities (${m.members.size} total${thin ?? ''})`);
   }
 
   // A stale heading was just renamed for the cluster graph.json holds NOW, but it
@@ -545,8 +580,15 @@ if (argv.includes('--apply')) {
   // preserved headings are untouched and every rewritten heading gets a
   // non-generic name — so a violation here means a bug in this script, and the
   // fail-closed answer is identical to the sync guard's: write nothing.
-  const existingNamed = m.report !== null ? countNamedLabels(m.report) : 0;
-  const nextNamed = countNamedLabels(text);
+  // Counted over LIVE ids only (SPO-345): deleting orphan headings lowers the
+  // raw countNamedLabels() of the new report by design, and that is not a lost
+  // label — an id graph.json no longer has cannot be named. label-guard.mjs's
+  // sync-time guard stays as it is: removing vault-side orphans only lowers the
+  // EXISTING count it compares against, which makes a later sync more
+  // permissive, never less.
+  const namedLive = (t) => [...readReportLabels(t)].filter(([id, l]) => m.members.has(id) && isNamedLabel(l)).length;
+  const existingNamed = m.report !== null ? namedLive(m.report) : 0;
+  const nextNamed = namedLive(text);
   if (nextNamed < existingNamed) {
     console.error(
       `error ${repo}: refusing to write a LESS-labeled report (${nextNamed} named vs ${existingNamed} existing). ` +
@@ -555,6 +597,11 @@ if (argv.includes('--apply')) {
     process.exit(3);
   }
   writeFileSync(m.reportPath, text, 'utf8');
+  // Reported AFTER the write, so a guard refusal above can never claim removals
+  // that were not persisted (the reported-success-wrote-nothing shape INNOV-263
+  // exists to prevent).
+  const removed = m.report !== null ? [...m.reportLabels.keys()].filter((id) => !m.members.has(id)).sort((a, b) => a - b) : [];
+  if (removed.length) console.log(`removed ${removed.length} stale heading(s): ${removed.join(',')}`);
   // Provenance sidecar: which of these names a human/agent chose and which this
   // script invented. Without it, the next classify() cannot tell them apart and
   // reads its own filler as a name worth preserving.

@@ -629,7 +629,8 @@ assert_eq "stale/run2-fresh-label-preserved" "Checkout Flow" \
 assert_eq "stale/run2-work-order-empty" "0" \
   "$(jexpr "$box/digest2.json" 'd[0].batches.length + Object.keys(d[0].labels_template).length')" \
   "digest: [$(head -c 800 "$box/digest2.json")]"
-assert_eq "stale/run2-absent-headings-still-reported" "90,91" \
+# SPO-345: --apply deletes the orphan headings, so run two reports none.
+assert_eq "stale/run2-absent-headings-removed-by-apply" "" \
   "$(jexpr "$box/digest2.json" '(d[0].stale_headings||[]).map(Number).sort((a,b)=>a-b).join(",")')"
 
 # --- G2. a CURRENT non-generic label is still never overwritten -------------
@@ -646,6 +647,96 @@ assert_eq "stale/current-mirror-has-no-stale-headings" "" \
 status="$(run_apply "$box" '{"2":"Should Not Win","1":"Auth Middleware"}')"
 assert_grep "stale/current-label-survives-apply" '### Community 2 - "Payments Core"' "$box/$REPORT_REL"
 assert_not_grep "stale/current-label-not-clobbered" "Should Not Win" "$box/$REPORT_REL"
+
+# ================================================================= PART H ===
+# SPO-345 — --apply never REMOVED a heading whose id graph.json no longer has.
+#   --digest listed them as stale_headings, but transformReport only visited
+#   live ids, so `### Community 108 - "..."` survived every run as a confident
+#   valid heading (285 of 470 on the measured mirror). Contract: orphan blocks
+#   are deleted, link entries pointing only at an orphan label are dropped, the
+#   `## Communities (N total, ...)` count is restated over live ids, every live
+#   block is byte-identical, and the INNOV-274 write guard (now counted over
+#   live ids only) does not refuse the write.
+# SPO-346 — every run that appended anything minted a fresh
+#   `## Additional communities (labeled vault-side)` header (1→2 observed).
+#   Contract: exactly one header, new entries go under the existing one.
+
+echo "--- H. stale headings removed / Additional section deduped (SPO-345, SPO-346) ---"
+
+ADDL_HEADER='## Additional communities (labeled vault-side)'
+
+# Live ids 0..5 all current and named; 100 and 108 are headings (and hub links)
+# for communities graph.json no longer has. "Old Gone" is linked only by 108.
+write_orphan_mirror() { # box
+  local dir="$1/vault/graphify/demo"
+  mkdir -p "$dir"
+  printf '%s\n' "$GRAPH_JSON" >"$dir/graph.json"
+  {
+    printf '# Graph Report - graphify/demo/graph.json\n\n'
+    printf '## Community Hubs (Navigation)\n'
+    printf -- '- [[_COMMUNITY_Checkout Flow|Checkout Flow]]\n'
+    printf -- '- [[_COMMUNITY_Payments Core|Payments Core]]\n'
+    printf -- '- [[_COMMUNITY_Legacy Hundred|Legacy Hundred]]\n'
+    printf -- '- [[_COMMUNITY_Old Gone|Old Gone]]\n\n'
+    printf '## Communities (8 total, 0 thin omitted)\n'
+    printf '### Community 0 - "Checkout Flow"\nNodes (3): a, b, c\n\n'
+    printf '### Community 1 - "Auth Middleware"\nNodes (2): d, e\n\n'
+    printf '### Community 2 - "Payments Core"\nCohesion: 0.5\nNodes (2): f, g\nNeighbors: [[_COMMUNITY_Checkout Flow|Checkout Flow]]\n\n'
+    printf '### Community 100 - "Legacy Hundred"\nNodes (2): zz1, zz2\n\n'
+    printf '### Community 3 - "Sync Worker"\nNodes (1): h\n\n'
+    printf '### Community 4 - "Alpha Utils"\nNodes (1): i\n\n'
+    printf '### Community 5 - "Beta Utils"\nNodes (1): j\n\n'
+    printf '### Community 108 - "Old Gone"\nNodes (1): zz3\n'
+  } >"$dir/demo-GRAPH_REPORT.md"
+}
+
+block_of() { # report id -> the heading block for that id (heading .. before next heading)
+  awk -v id="$2" '/^### Community /{p=($0 ~ "^### Community " id " - ")} /^## /{p=0} p' "$1"
+}
+
+box="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+write_orphan_mirror "$box"
+block2_before="$(block_of "$box/$REPORT_REL" 2)"
+status="$(run_apply "$box" '{"0":"Checkout Flow"}')"
+assert_eq "orphan/apply-exit-0-guard-does-not-trip" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+assert_not_grep "orphan/heading-100-removed" '### Community 100 - ' "$box/$REPORT_REL" \
+  "report: [$(cat "$box/$REPORT_REL")]"
+assert_not_grep "orphan/heading-108-removed" '### Community 108 - ' "$box/$REPORT_REL"
+assert_not_grep "orphan/orphan-member-line-removed" 'zz1, zz2' "$box/$REPORT_REL"
+assert_grep "orphan/summary-line-names-removed-ids" 'removed 2 stale heading(s): 100,108' "$box/out.txt" \
+  "stdout: [$(cat "$box/out.txt")]"
+assert_grep "orphan/header-count-restated-over-live-ids" '## Communities (6 total, 0 thin omitted)' "$box/$REPORT_REL"
+assert_eq "orphan/live-block-byte-identical" "$block2_before" "$(block_of "$box/$REPORT_REL" 2)"
+for i in 0 1 3 4 5; do
+  assert_grep "orphan/live-heading-$i-intact" "### Community $i - " "$box/$REPORT_REL"
+done
+# (c) link list: orphan-only labels gone, live ones intact.
+assert_not_grep "orphan/link-to-orphan-label-removed" '[[_COMMUNITY_Old Gone|Old Gone]]' "$box/$REPORT_REL"
+assert_not_grep "orphan/link-to-other-orphan-label-removed" '[[_COMMUNITY_Legacy Hundred|Legacy Hundred]]' "$box/$REPORT_REL"
+assert_grep "orphan/live-hub-link-intact" '- [[_COMMUNITY_Payments Core|Payments Core]]' "$box/$REPORT_REL"
+assert_grep "orphan/live-inline-link-intact" 'Neighbors: [[_COMMUNITY_Checkout Flow|Checkout Flow]]' "$box/$REPORT_REL"
+# Idempotent: a second digest sees nothing stale.
+status="$(run_label "$box" --digest demo)"
+cp "$box/out.txt" "$box/digest.json"
+assert_eq "orphan/run2-digest-no-stale-headings" "" \
+  "$(jexpr "$box/digest.json" '(d[0].stale_headings||[]).join(",")')"
+
+# --- H2. SPO-346: one Additional header across two appending runs ----------
+box="$(new_box)"
+status="$(run_apply "$box" '{"0":"Checkout Flow","1":"Auth Middleware","3":"Sync Worker","4":"Alpha Utils","5":"Beta Utils"}')"
+assert_eq "additional/run1-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+assert_eq "additional/run1-one-header" "1" "$(grep -cF -- "$ADDL_HEADER" "$box/$REPORT_REL")"
+# A rebuild minted a new thin community 6 with no heading yet.
+node -e '
+const fs=require("fs"),p=process.argv[1],g=JSON.parse(fs.readFileSync(p,"utf8"));
+g.nodes.push({id:"k",label:"k",community:6,source_file:"src/c/new.ts"});
+fs.writeFileSync(p,JSON.stringify(g));' "$(to_native "$box/vault/graphify/demo/graph.json")"
+status="$(run_apply "$box" '{"6":"New Thing"}')"
+assert_eq "additional/run2-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+assert_eq "additional/run2-still-one-header" "1" "$(grep -cF -- "$ADDL_HEADER" "$box/$REPORT_REL")" \
+  "report: [$(cat "$box/$REPORT_REL")]"
+assert_grep "additional/run2-new-entry-appended" '### Community 6 - "New Thing"' "$box/$REPORT_REL"
+assert_grep "additional/run1-entries-survive" '### Community 3 - "Sync Worker"' "$box/$REPORT_REL"
 
 # ================================================================= SUMMARY ==
 echo
