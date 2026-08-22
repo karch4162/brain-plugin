@@ -737,6 +737,21 @@ assert_eq "additional/run2-still-one-header" "1" "$(grep -cF -- "$ADDL_HEADER" "
   "report: [$(cat "$box/$REPORT_REL")]"
 assert_grep "additional/run2-new-entry-appended" '### Community 6 - "New Thing"' "$box/$REPORT_REL"
 assert_grep "additional/run1-entries-survive" '### Community 3 - "Sync Worker"' "$box/$REPORT_REL"
+# Third run against a CRLF report: core.autocrlf=true hands --apply `\r\n`
+# endings on a vault checkout, and a `\n<header>\n` predicate misses the
+# existing header (observed on the first real SPO-345 run: 1 -> 2 headers).
+node -e '
+const fs=require("fs"),p=process.argv[1];
+fs.writeFileSync(p,fs.readFileSync(p,"utf8").replace(/\r?\n/g,"\r\n"));' "$(to_native "$box/$REPORT_REL")"
+node -e '
+const fs=require("fs"),p=process.argv[1],g=JSON.parse(fs.readFileSync(p,"utf8"));
+g.nodes.push({id:"m",label:"m",community:7,source_file:"src/c/crlf.ts"});
+fs.writeFileSync(p,JSON.stringify(g));' "$(to_native "$box/vault/graphify/demo/graph.json")"
+status="$(run_apply "$box" '{"7":"CRLF Thing"}')"
+assert_eq "additional/run3-crlf-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+assert_eq "additional/run3-crlf-still-one-header" "1" "$(grep -cF -- "$ADDL_HEADER" "$box/$REPORT_REL")" \
+  "report: [$(cat "$box/$REPORT_REL")]"
+assert_grep "additional/run3-crlf-new-entry-appended" '### Community 7 - "CRLF Thing"' "$box/$REPORT_REL"
 
 # ================================================================= SUMMARY ==
 echo
