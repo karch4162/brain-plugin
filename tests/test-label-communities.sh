@@ -607,7 +607,7 @@ assert_eq "stale/every-drifted-id-is-namable" "0,1,2,3,4,5" \
 assert_eq "stale/drifted-labels-not-counted-preserved" "0" \
   "$(jexpr "$box/digest.json" 'Object.keys(d[0].preserved).length')" \
   "digest: [$(head -c 800 "$box/digest.json")]"
-assert_eq "stale/headings-absent-from-graph-are-reported" "90,91" \
+assert_eq "stale/unmatched-stale-headings-are-reported" "0,1,2,3,4,5,90,91" \
   "$(jexpr "$box/digest.json" '(d[0].stale_headings||[]).map(Number).sort((a,b)=>a-b).join(",")')" \
   "digest: [$(head -c 800 "$box/digest.json")]"
 
@@ -737,6 +737,147 @@ assert_eq "additional/run2-still-one-header" "1" "$(grep -cF -- "$ADDL_HEADER" "
   "report: [$(cat "$box/$REPORT_REL")]"
 assert_grep "additional/run2-new-entry-appended" '### Community 6 - "New Thing"' "$box/$REPORT_REL"
 assert_grep "additional/run1-entries-survive" '### Community 3 - "Sync Worker"' "$box/$REPORT_REL"
+
+# ================================================================= PART I ===
+# SPO-347 — re-minted community ids must not clobber existing names.
+#
+# graphify re-mints ids on every resync, so a fully-named report can wake up
+# with its names sitting under ids that now denote DIFFERENT clusters. The old
+# --digest preserved a name only when its heading id still matched graph.json
+# membership, so displaced names landed in batches as "unlabeled" and --apply
+# overwrote them (2026-08-22 repro: 25 named -> 9 preserved, 16 clobbered).
+# Contract: a displaced name is matched to the live cluster that still holds
+# its stated members (member overlap, same rule as isStale) and preserved at
+# its NEW id; only names with no surviving cluster enter the work order, and
+# they are listed in stale_headings. Fixtures run in LF *and* CRLF variants —
+# the vault is autocrlf and LF-only fixtures gave a false green before
+# (SPO-346).
+
+echo "--- I. re-minted ids: names remap by member overlap (SPO-347) ---"
+
+# graph.json AFTER a resync re-minted ids: the "Checkout Flow" cluster (a,b,c)
+# moved 10->11, "Auth Middleware" (d,e) moved 11->12; "Payments Core" kept id 0;
+# 13 is brand new; old heading 99's members have no surviving cluster.
+REMINT_GRAPH='{"nodes":[
+  {"id":"f","label":"f","community":0,"source_file":"src/pay/core.ts"},
+  {"id":"g","label":"g","community":0,"source_file":"src/pay/core.ts"},
+  {"id":"a","label":"a","community":11,"source_file":"src/checkout/flow.ts"},
+  {"id":"b","label":"b","community":11,"source_file":"src/checkout/flow.ts"},
+  {"id":"c","label":"c","community":11,"source_file":"src/checkout/flow.ts"},
+  {"id":"d","label":"d","community":12,"source_file":"src/auth/mw.ts"},
+  {"id":"e","label":"e","community":12,"source_file":"src/auth/mw.ts"},
+  {"id":"x","label":"x","community":13,"source_file":"src/new/thing.ts"},
+  {"id":"y","label":"y","community":13,"source_file":"src/new/thing.ts"}
+],"links":[]}'
+
+write_remint_mirror() { # box [crlf]
+  local dir="$1/vault/graphify/demo"
+  mkdir -p "$dir"
+  printf '%s\n' "$REMINT_GRAPH" >"$dir/graph.json"
+  {
+    printf '# Graph Report - graphify/demo/graph.json\n\n'
+    printf '## Community Hubs (Navigation)\n'
+    printf -- '- [[_COMMUNITY_Payments Core|Payments Core]]\n'
+    printf -- '- [[_COMMUNITY_Checkout Flow|Checkout Flow]]\n'
+    printf -- '- [[_COMMUNITY_Auth Middleware|Auth Middleware]]\n\n'
+    printf '## Communities (4 total, 0 thin omitted)\n'
+    printf '### Community 0 - "Payments Core"\nNodes (2): f, g\n\n'
+    printf '### Community 10 - "Checkout Flow"\nNodes (3): a, b, c\n\n'
+    printf '### Community 11 - "Auth Middleware"\nNodes (2): d, e\n\n'
+    printf '### Community 99 - "Totally Gone"\nNodes (2): q1, q2\n'
+  } >"$dir/demo-GRAPH_REPORT.md"
+  # CRLF variant: the vault checks reports out with autocrlf (SPO-346 lesson).
+  if [[ "${2:-}" == crlf ]]; then sed -i 's/\r*$/\r/' "$dir/demo-GRAPH_REPORT.md"; fi
+}
+
+run_remint_suite() { # variant-tag [crlf]
+  local tag="$1" crlf="${2:-}" box status
+  box="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+  write_remint_mirror "$box" "$crlf"
+
+  # --- digest: displaced names preserved at their NEW ids ---------------------
+  status="$(run_label "$box" --digest demo)"
+  assert_eq "remint-$tag/digest-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+  cp "$box/out.txt" "$box/digest.json"
+  assert_eq "remint-$tag/name-remapped-10-to-11" "Checkout Flow" \
+    "$(jexpr "$box/digest.json" "d[0].preserved['11']")" \
+    "digest: [$(head -c 800 "$box/digest.json")]"
+  assert_eq "remint-$tag/name-remapped-11-to-12" "Auth Middleware" \
+    "$(jexpr "$box/digest.json" "d[0].preserved['12']")"
+  assert_eq "remint-$tag/in-place-name-still-preserved" "Payments Core" \
+    "$(jexpr "$box/digest.json" "d[0].preserved['0']")"
+  assert_eq "remint-$tag/remapped-records-old-id" "10" \
+    "$(jexpr "$box/digest.json" "d[0].remapped['11'].from")"
+  assert_eq "remint-$tag/only-truly-new-cluster-in-work-order" "13" \
+    "$(jexpr "$box/digest.json" 'Object.keys(d[0].labels_template).join(",")')" \
+    "digest: [$(head -c 800 "$box/digest.json")]"
+  assert_eq "remint-$tag/unmatched-old-heading-listed-stale" "99" \
+    "$(jexpr "$box/digest.json" '(d[0].stale_headings||[]).join(",")')"
+
+  # --- apply: no existing name is renamed; headings move to the new ids -------
+  status="$(run_apply "$box" '{"13":"Fresh Cluster"}')"
+  assert_eq "remint-$tag/apply-exit-0" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+  assert_grep "remint-$tag/name-lands-at-new-id-11" '### Community 11 - "Checkout Flow"' "$box/$REPORT_REL" \
+    "report: [$(cat "$box/$REPORT_REL")]"
+  assert_grep "remint-$tag/name-lands-at-new-id-12" '### Community 12 - "Auth Middleware"' "$box/$REPORT_REL"
+  assert_grep "remint-$tag/in-place-heading-untouched" '### Community 0 - "Payments Core"' "$box/$REPORT_REL"
+  assert_grep "remint-$tag/new-cluster-gets-agent-name" '### Community 13 - "Fresh Cluster"' "$box/$REPORT_REL"
+  assert_not_grep "remint-$tag/old-heading-10-removed" '### Community 10 - ' "$box/$REPORT_REL"
+  assert_not_grep "remint-$tag/unmatched-old-heading-removed" 'Totally Gone' "$box/$REPORT_REL"
+  # Link entries keep pointing at the surviving names (keepLinkNames path).
+  assert_grep "remint-$tag/hub-link-to-remapped-name-survives" '- [[_COMMUNITY_Checkout Flow|Checkout Flow]]' "$box/$REPORT_REL"
+  assert_grep "remint-$tag/hub-link-to-other-remapped-name-survives" '- [[_COMMUNITY_Auth Middleware|Auth Middleware]]' "$box/$REPORT_REL"
+  # The remapped heading's member line is refreshed to the CURRENT cluster.
+  assert_grep "remint-$tag/remapped-heading-members-refreshed" 'Nodes (3): a, b, c' "$box/$REPORT_REL"
+
+  # --- run 2 digest: fully idempotent ----------------------------------------
+  status="$(run_label "$box" --digest demo)"
+  cp "$box/out.txt" "$box/digest2.json"
+  assert_eq "remint-$tag/run2-all-preserved" "4" \
+    "$(jexpr "$box/digest2.json" 'Object.keys(d[0].preserved).length')" \
+    "digest: [$(head -c 800 "$box/digest2.json")]" "report: [$(cat "$box/$REPORT_REL")]"
+  assert_eq "remint-$tag/run2-work-order-empty" "0" \
+    "$(jexpr "$box/digest2.json" 'd[0].batches.length + Object.keys(d[0].labels_template).length')"
+  assert_eq "remint-$tag/run2-no-stale-headings" "" \
+    "$(jexpr "$box/digest2.json" '(d[0].stale_headings||[]).join(",")')"
+}
+
+run_remint_suite lf
+run_remint_suite crlf crlf
+
+# CRLF write hygiene: the refreshed member line under the remapped heading must
+# keep its CRLF ending, not desync the report into mixed endings at that line.
+box="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+write_remint_mirror "$box" crlf
+status="$(run_apply "$box" '{"13":"Fresh Cluster"}')"
+# Byte-exact via node: Git Bash grep/command-substitution CR handling is not
+# trustworthy for asserting a literal \r (the SPO-346 false-green lesson).
+if node -e 'const t=require("fs").readFileSync(process.argv[1],"utf8");process.exit(/Nodes \(3\): a, b, c\r\n/.test(t)?0:1)' "$(to_native "$box/$REPORT_REL")"; then
+  pass "remint-crlf/refreshed-member-line-keeps-crlf"
+else
+  fail "remint-crlf/refreshed-member-line-keeps-crlf" \
+    "expected the rewritten member line to end with CRLF" \
+    "line: [$(grep -n 'Nodes (3): a, b, c' "$box/$REPORT_REL" | head -n 1)]"
+fi
+
+# --- I2. remap-only apply: an EMPTY labels file is legitimate when every -----
+# displaced name found its re-minted id (nothing left for the agent to name).
+# Without this carve-out the INNOV-263 zero-match banner would exit 2 and the
+# remap could never land on a mirror with no genuinely-new communities.
+box="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+write_remint_mirror "$box"
+status="$(run_apply "$box" '{}')"
+assert_eq "remap-only/empty-labels-file-applies" "0" "$status" \
+  "stdout: [$(cat "$box/out.txt")]" "stderr: [$(cat "$box/err.txt")]"
+assert_grep "remap-only/name-moved-to-new-id" '### Community 11 - "Checkout Flow"' "$box/$REPORT_REL" \
+  "report: [$(cat "$box/$REPORT_REL")]"
+assert_grep "remap-only/says-what-it-did" 'remap-only apply' "$box/err.txt"
+# ...but a MIS-KEYED labels file (has keys, none match) still fails loudly even
+# when a remap exists: keys that match nothing are a mistake, never an intent.
+cp "$box/$REPORT_REL" "$box/report.before2"
+status="$(run_apply "$box" '{"cluster 11":"Nope"}')"
+assert_ne "remap-only/mis-keyed-file-still-fails" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
+assert_files_identical "remap-only/mis-keyed-file-writes-nothing" "$box/report.before2" "$box/$REPORT_REL"
 
 # ================================================================= SUMMARY ==
 echo

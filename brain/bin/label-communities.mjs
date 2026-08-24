@@ -293,15 +293,65 @@ function deriveName(nodes, taken) {
   return uniqueLabel(sanitizeLabel(base) || 'cluster', taken);
 }
 
+// SPO-347: graphify re-mints community ids on every resync, so an existing name
+// can sit under a heading id that now denotes a DIFFERENT cluster (or none) —
+// on the 2026-08-22 repro, 16 of 25 named communities landed in batches as
+// "unlabeled" and --apply overwrote them. Before a displaced name is given up
+// on, match it to the live cluster that still holds its stated members: the
+// same overlap rule isStale applies (containment of the report's <=12-member
+// sample — Jaccard against a full cluster could never clear the bar), the same
+// member-identity idea build-community-notes.mjs uses to keep stub filenames
+// stable across reminting. A matched name is preserved at its NEW id; only
+// names with no surviving cluster fall through to the work order.
+function remapNames(m, inPlaceIds, takenNames) {
+  const out = new Map(); // new id -> { name, from: old id }
+  const movable = [];
+  for (const [oldId, label] of m.reportLabels) {
+    if (inPlaceIds.has(oldId) || !isNamedLabel(label)) continue;
+    if (takenNames.has(nameKey(label))) continue; // the name already lives at a preserved id
+    const rec = m.provenance.get(oldId);
+    if (rec && rec.provenance === 'derived' && nameKey(rec.name ?? '') === nameKey(label)) continue; // script filler — not worth moving
+    if (m.members.has(oldId) && !isStale(m, oldId)) continue; // still describes its own id
+    const stated = m.reportMembers.get(oldId);
+    if (!stated || stated.length === 0) continue;
+    movable.push({ oldId, label, stated });
+  }
+  if (!movable.length) return out;
+  const scored = [];
+  for (const { oldId, label, stated } of movable)
+    for (const [id, nodes] of m.members) {
+      if (inPlaceIds.has(id)) continue; // that id's current name is off-limits
+      const now = new Set(nodes.map(nodeKey));
+      const overlap = stated.filter((s) => now.has(s)).length / stated.length;
+      if (overlap >= STALE_OVERLAP) scored.push({ oldId, id, label, overlap });
+    }
+  // Greedy best-first with a deterministic tie-break — the same assignment
+  // shape as build-community-notes' prior-stub matching.
+  scored.sort((a, b) => b.overlap - a.overlap || a.id - b.id || a.oldId - b.oldId);
+  const usedOld = new Set();
+  const usedNames = new Set(takenNames);
+  for (const s of scored) {
+    if (out.has(s.id) || usedOld.has(s.oldId) || usedNames.has(nameKey(s.label))) continue;
+    out.set(s.id, { name: s.label, from: s.oldId });
+    usedOld.add(s.oldId);
+    usedNames.add(nameKey(s.label));
+  }
+  return out;
+}
+
 // Split one mirror's communities into preserved / to-name / derived.
 function classify(repo, m) {
-  const preserved = {}; // id → existing non-generic label (never touched)
-  const unnamed = [];   // ids needing a label (generic heading, or absent from report)
-  for (const [id, nodes] of m.members) {
+  const preserved = {};       // id → existing non-generic label (never touched)
+  const inPlaceIds = new Set(); // ...preserved under the id the report already uses
+  for (const [id] of m.members) {
     const existing = m.reportLabels.get(id);
-    if (isPreserved(m, id, existing)) preserved[id] = existing;
-    else unnamed.push({ id, nodes });
+    if (isPreserved(m, id, existing)) { preserved[id] = existing; inPlaceIds.add(id); }
   }
+  const remap = remapNames(m, inPlaceIds, new Set(Object.values(preserved).map(nameKey)));
+  const remapped = {}; // new id → { label, from } — digest observability + --apply
+  for (const [id, r] of remap) { preserved[id] = r.name; remapped[id] = { label: r.name, from: r.from }; }
+  const unnamed = [];  // ids needing a label (generic heading, or absent from report)
+  for (const [id, nodes] of m.members) if (preserved[id] === undefined) unnamed.push({ id, nodes });
   unnamed.sort((a, b) => b.nodes.length - a.nodes.length);
   const llm = unnamed.slice(0, TOP_K);
   const tail = unnamed.slice(TOP_K);
@@ -317,11 +367,15 @@ function classify(repo, m) {
   // labels_template is the labels file, minus the values (INNOV-263 c).
   const labels_template = {};
   for (const { id } of llm) labels_template[id] = '';
-  // Headings for ids graph.json no longer has. They are stale by definition, but
-  // there is nothing left to name — reported here, and DELETED by --apply
-  // (SPO-345; transformReport).
-  const stale_headings = [...m.reportLabels.keys()].filter((id) => !m.members.has(id)).sort((a, b) => a - b);
-  return { repo, total: m.members.size, preserved, derived, batches, stale_headings, labels_key_form: LABELS_KEY_FORM, labels_template };
+  // Headings whose name no longer describes ANY live cluster (SPO-347): the id
+  // is absent from graph.json, or its members drifted (isStale) and no live
+  // cluster matched the name by member overlap. The absent subset is DELETED by
+  // --apply (SPO-345; transformReport); the live-but-stale subset is renamed.
+  const remapSources = new Set([...remap.values()].map((r) => r.from));
+  const stale_headings = [...m.reportLabels.keys()]
+    .filter((id) => !remapSources.has(id) && !inPlaceIds.has(id) && (!m.members.has(id) || isStale(m, id)))
+    .sort((a, b) => a - b);
+  return { repo, total: m.members.size, preserved, remapped, derived, batches, stale_headings, labels_key_form: LABELS_KEY_FORM, labels_template };
 }
 
 // ---- report writing ----------------------------------------------------------
@@ -336,7 +390,7 @@ const nodesLine = (nodes) =>
 
 const ADDITIONAL_HEADER = '## Additional communities (labeled vault-side)';
 
-function transformReport(m, finalLabels, preservedIds) {
+function transformReport(m, finalLabels, preservedIds, keepLinkNames = new Set()) {
   // In-place: rename renamable headings + their hub links; append omitted ids.
   let text = m.report;
   const appended = [];
@@ -347,7 +401,12 @@ function transformReport(m, finalLabels, preservedIds) {
     if (existing === undefined) { appended.push([id, label]); continue; } // thin/omitted → appended section
     if (existing === label) continue;
     text = text.replaceAll(`### Community ${id} - "${existing}"`, `### Community ${id} - "${label}"`);
-    text = text.replaceAll(`[[_COMMUNITY_${existing}|${existing}]]`, hubLink(label));
+    // SPO-347: when this heading's old name was REMAPPED to a live cluster the
+    // name survives elsewhere in the report — its link entries must keep
+    // pointing at it, not follow this id's fresh label.
+    if (!keepLinkNames.has(nameKey(existing))) {
+      text = text.replaceAll(`[[_COMMUNITY_${existing}|${existing}]]`, hubLink(label));
+    }
   }
   if (appended.length) {
     appended.sort((a, b) => (m.members.get(b[0])?.length ?? 0) - (m.members.get(a[0])?.length ?? 0));
@@ -501,6 +560,12 @@ if (argv.includes('--apply')) {
     process.exit(1);
   }
 
+  // Classified up front: SPO-347's remap can make an apply legitimate even when
+  // the labels file is empty (every displaced name found its re-minted id, so
+  // there was nothing left to ask the agent for).
+  const { preserved, remapped } = classify(repo, m);
+  const remapOnly = Object.keys(supplied).length === 0 && Object.keys(remapped).length > 0;
+
   // ---- key normalization + match check (INNOV-263 a/b) ----------------------
   // Accept the raw id and the digest's display form, then REFUSE to run when
   // nothing matched. Silently deriving filler for a labels file that was merely
@@ -519,7 +584,7 @@ if (argv.includes('--apply')) {
   const idRange = knownIds.size
     ? `${Math.min(...m.members.keys())}..${Math.max(...m.members.keys())}`
     : '(none)';
-  if (matchedKeys.length === 0) {
+  if (matchedKeys.length === 0 && !remapOnly) {
     console.error('');
     console.error('  ############################################################');
     console.error('  ##  LABELS NOT APPLIED — NO KEY MATCHED A COMMUNITY ID    ##');
@@ -540,12 +605,21 @@ if (argv.includes('--apply')) {
     );
   }
 
+  if (remapOnly) {
+    console.error(`remap-only apply ${repo}: ${Object.keys(remapped).length} existing name(s) moved to re-minted id(s); no new labels supplied`);
+  }
+
   // Merge preserved > agent > derived. Preserved labels are re-read fresh from
   // the report (never trusted from a stale digest); any unnamed id the agent
   // didn't cover — the tail, or an invalid entry — gets a derived name here,
   // deterministically, largest community first.
-  const { preserved } = classify(repo, m);
-  const preservedIds = new Set(Object.keys(preserved).map(Number));
+  //
+  // SPO-347: in-place preserved ids are the untouchable set transformReport
+  // skips. A REMAPPED name is preserved too (origin 'preserved', never renamed),
+  // but under a NEW id whose heading must still be written — so it flows through
+  // finalLabels as a rename/append rather than being skipped.
+  const preservedIds = new Set(Object.keys(preserved).map(Number).filter((id) => remapped[id] === undefined));
+  const keepLinkNames = new Set(Object.values(remapped).map((r) => nameKey(r.label)));
   const finalLabels = {};
   const origin = {}; // id → 'preserved' | 'agent' | 'derived'  (persisted; see PROVENANCE)
   const taken = new Set(Object.values(preserved).map((l) => nameKey(l)));
@@ -572,7 +646,7 @@ if (argv.includes('--apply')) {
   const pad = (n) => String(n).padStart(2, '0');
   const today = new Date();
   const date = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-  const text = m.report !== null ? transformReport(m, finalLabels, preservedIds) : generateReport(repo, m, finalLabels, date);
+  const text = m.report !== null ? transformReport(m, finalLabels, preservedIds, keepLinkNames) : generateReport(repo, m, finalLabels, date);
 
   // INNOV-274 write-time invariant, using the SAME rule sync-graph.sh applies at
   // copy time (label-guard.mjs): a report we are about to write must never name

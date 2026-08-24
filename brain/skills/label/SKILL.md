@@ -36,7 +36,7 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).
    ```
    Community 11 (95 nodes): _adjustTab, _appliedGiftCards, CheckoutBloc, ... | files: presentation/checkout/bloc/checkout_bloc.dart
    ```
-   If every repo comes back with empty `batches` + `derived`, report "already labeled" per mirror and stop — the pass is idempotent.
+   If every repo comes back with empty `batches` + `derived` **and** empty `remapped` + `stale_headings`, report "already labeled" per mirror and stop — the pass is idempotent. A non-empty `remapped` (SPO-347: existing names matched to re-minted community ids by member overlap) or `stale_headings` means the report on disk still needs rewriting even when there is nothing for you to name: continue to step 3 — an **empty** labels file `{}` is valid for that remap-only apply.
 
 2. **Name each batch in-session.** For each line, write a concise **2–5 word plain-language name** describing what the cluster is about — "Checkout BLoC", "Order Management", "Payment Flow", "Auth Middleware". Use both the member labels *and* the file paths (the paths usually carry the most signal). Rules: no `"` in names; avoid `\ / : * ? < > | # ^ [ ]` (they get folded to `-` in stub filenames); don't reuse an existing preserved name for a different cluster unless they genuinely belong together (same-name communities merge into one stub note).
 
