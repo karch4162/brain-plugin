@@ -356,7 +356,13 @@ function transformReport(m, finalLabels, preservedIds) {
     // already there appends its entries under it instead of minting a second
     // header — observed 1→2 duplicate headers after two --apply runs that each
     // had new thin ids.
-    const L = text.includes(`\n${ADDITIONAL_HEADER}\n`) ? [''] : ['', ADDITIONAL_HEADER, ''];
+    // Match the header as a LINE, CR-tolerant: a vault checkout under
+    // core.autocrlf=true hands us `\r\n` on exactly the lines git last touched,
+    // and `\n${header}\n` silently missed it — the first real SPO-345 run on
+    // sports-management minted a second header. Fixtures are LF-only; this
+    // regex is the actual contract.
+    const hasHeader = new RegExp(`^${ADDITIONAL_HEADER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\r?$`, 'm').test(text);
+    const L = hasHeader ? [''] : ['', ADDITIONAL_HEADER, ''];
     for (const [id, label] of appended) {
       const nodes = m.members.get(id) ?? [];
       L.push(`### Community ${id} - "${label}"`);
