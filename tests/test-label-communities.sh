@@ -894,6 +894,130 @@ status="$(run_apply "$box" '{"cluster 11":"Nope"}')"
 assert_ne "remap-only/mis-keyed-file-still-fails" "0" "$status" "stderr: [$(cat "$box/err.txt")]"
 assert_files_identical "remap-only/mis-keyed-file-writes-nothing" "$box/report.before2" "$box/$REPORT_REL"
 
+# ================================================================= PART J ===
+# SPO-355 — member-overlap rename protection must never bind a renamed
+# community to a filename that belongs to a DIFFERENT live community.
+#
+# Repro (2026-08-24, 0.2.40): after ids re-minted and a relabel via the SPO-347
+# remap, community 9 (now "Label Guard") matched old id 9's occupant's stub
+# `_COMMUNITY_Eval Runner.md` by member overlap and took that NAME as its
+# filename — while live community 10 IS "Eval Runner". One of the two then got
+# a collision suffix (`_COMMUNITY_Eval Runner (2).md`). Contract: a community
+# whose current label is X gets `_COMMUNITY_X.md`; a matched old identity
+# survives only in `aliases:`; no ` (N)` suffix is ever minted by binding to
+# another live community's name. Fixtures run in LF *and* CRLF variants — the
+# vault is autocrlf and LF-only fixtures gave a false green before (SPO-346).
+
+echo "--- J. rename must not steal another live community's stub name (SPO-355) ---"
+
+RENAME_GRAPH='{"nodes":[
+  {"id":"lg1","label":"lg1","community":9,"source_file":"brain/bin/label-guard.mjs"},
+  {"id":"lg2","label":"lg2","community":9,"source_file":"brain/bin/label-guard.mjs"},
+  {"id":"lg3","label":"lg3","community":9,"source_file":"brain/bin/label-guard.mjs"},
+  {"id":"er1","label":"er1","community":10,"source_file":"brain/bin/eval-runner.mjs"},
+  {"id":"er2","label":"er2","community":10,"source_file":"brain/bin/eval-runner.mjs"},
+  {"id":"er3","label":"er3","community":10,"source_file":"brain/bin/eval-runner.mjs"}
+],"links":[]}'
+
+write_rename_mirror() { # box
+  local dir="$1/vault/graphify/demo"
+  mkdir -p "$dir/communities"
+  printf '%s\n' "$RENAME_GRAPH" >"$dir/graph.json"
+  {
+    printf '# Graph Report - graphify/demo/graph.json\n\n'
+    printf '## Community Hubs (Navigation)\n'
+    printf -- '- [[_COMMUNITY_Label Guard|Label Guard]]\n'
+    printf -- '- [[_COMMUNITY_Eval Runner|Eval Runner]]\n\n'
+    printf '## Communities (2 total, 0 thin omitted)\n'
+    printf '### Community 9 - "Label Guard"\nNodes (3): lg1, lg2, lg3\n\n'
+    printf '### Community 10 - "Eval Runner"\nNodes (3): er1, er2, er3\n'
+  } >"$dir/demo-GRAPH_REPORT.md"
+}
+
+# A prior stub exactly as bin/build-community-notes.mjs writes them.
+write_prior_stub() { # box fileBase heading members...
+  local box="$1" base="$2" heading="$3"
+  shift 3
+  local f="$box/vault/graphify/demo/communities/$base.md"
+  {
+    printf -- '---\ngenerated: true\ngenerator: bin/build-community-notes.mjs\n'
+    printf 'repo: demo\ncommunity_ids: [9]\nnode_count: %s\n' "$#"
+    printf 'members:\n'
+    local m
+    for m in "$@"; do printf '  - "%s"\n' "$m"; done
+    printf -- '---\n\n# %s\n\nstub body\n' "$heading"
+  } >"$f"
+}
+
+run_rename_suite() { # variant-tag [crlf]
+  local tag="$1" crlf="${2:-}" box status
+  box="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+  write_rename_mirror "$box"
+  # Old id 9's occupant was "Eval Runner"; its stub still holds what are now
+  # community 9's ("Label Guard"'s) members. Live community 10's real identity
+  # is a separate prior stub with 10's members.
+  write_prior_stub "$box" "_COMMUNITY_Eval Runner" "Eval Runner" lg1 lg2 lg3
+  # (only one prior stub can carry the bare name on disk; community 10 has no
+  # prior identity here and must still end up owning `_COMMUNITY_Eval Runner.md`)
+  if [[ "$crlf" == crlf ]]; then
+    sed -i 's/\r*$/\r/' "$box/vault/graphify/demo/communities/_COMMUNITY_Eval Runner.md"
+    sed -i 's/\r*$/\r/' "$box/vault/graphify/demo/demo-GRAPH_REPORT.md"
+  fi
+
+  status="$(run_stubs "$box")"
+  assert_eq "rename-$tag/stubs-exit-0" "0" "$status" "stderr: [$(cat "$box/stubs.err")]"
+  local cdir="$box/vault/graphify/demo/communities"
+  if [[ -f "$cdir/_COMMUNITY_Label Guard.md" ]]; then
+    pass "rename-$tag/current-label-owns-the-filename"
+  else
+    fail "rename-$tag/current-label-owns-the-filename" \
+      "expected _COMMUNITY_Label Guard.md" "dir: [$(ls "$cdir" 2>/dev/null | tr '\n' ' ')]"
+  fi
+  assert_grep "rename-$tag/label-guard-stub-is-community-9" 'community_ids: [9]' \
+    "$cdir/_COMMUNITY_Label Guard.md"
+  assert_grep "rename-$tag/old-name-survives-as-alias" '"_COMMUNITY_Eval Runner"' \
+    "$cdir/_COMMUNITY_Label Guard.md" \
+    "stub: [$(head -c 400 "$cdir/_COMMUNITY_Label Guard.md" 2>/dev/null)]"
+  if [[ -f "$cdir/_COMMUNITY_Eval Runner.md" ]]; then
+    pass "rename-$tag/live-eval-runner-keeps-its-own-filename"
+  else
+    fail "rename-$tag/live-eval-runner-keeps-its-own-filename" \
+      "expected _COMMUNITY_Eval Runner.md for community 10" \
+      "dir: [$(ls "$cdir" 2>/dev/null | tr '\n' ' ')]"
+  fi
+  assert_grep "rename-$tag/eval-runner-stub-is-community-10" 'community_ids: [10]' \
+    "$cdir/_COMMUNITY_Eval Runner.md"
+  local suffixed
+  suffixed="$(find "$cdir" -maxdepth 1 -name '* ([0-9]*).md' 2>/dev/null | wc -l | tr -d ' ')"
+  assert_eq "rename-$tag/no-collision-suffixed-stub" "0" "$suffixed" \
+    "found: [$(find "$cdir" -maxdepth 1 -name '* ([0-9]*).md' 2>/dev/null | tr '\n' ' ')]"
+}
+
+run_rename_suite lf
+run_rename_suite crlf crlf
+
+# --- J2. an already-compounded vault heals: the ` (2)` artifact of the buggy --
+# binding must not survive a rebuild just because no live community owns the
+# suffixed name verbatim.
+box="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+write_rename_mirror "$box"
+write_prior_stub "$box" "_COMMUNITY_Eval Runner (2)" "Label Guard" lg1 lg2 lg3
+write_prior_stub "$box" "_COMMUNITY_Eval Runner" "Eval Runner" er1 er2 er3
+status="$(run_stubs "$box")"
+assert_eq "rename-heal/stubs-exit-0" "0" "$status" "stderr: [$(cat "$box/stubs.err")]"
+cdir="$box/vault/graphify/demo/communities"
+if [[ -f "$cdir/_COMMUNITY_Label Guard.md" ]]; then
+  pass "rename-heal/suffixed-artifact-renamed-to-current-label"
+else
+  fail "rename-heal/suffixed-artifact-renamed-to-current-label" \
+    "expected _COMMUNITY_Label Guard.md" "dir: [$(ls "$cdir" 2>/dev/null | tr '\n' ' ')]"
+fi
+assert_grep "rename-heal/eval-runner-still-community-10" 'community_ids: [10]' \
+  "$cdir/_COMMUNITY_Eval Runner.md"
+suffixed="$(find "$cdir" -maxdepth 1 -name '* ([0-9]*).md' 2>/dev/null | wc -l | tr -d ' ')"
+assert_eq "rename-heal/no-suffixed-stub-survives" "0" "$suffixed" \
+  "found: [$(find "$cdir" -maxdepth 1 -name '* ([0-9]*).md' 2>/dev/null | tr '\n' ' ')]"
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"

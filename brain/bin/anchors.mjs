@@ -178,6 +178,10 @@ export function classifyAnchors(ctx, note) {
 
   for (const srcRaw of note.source.split(';')) {
     let src = srcRaw.trim().split('#')[0].trim().replace(/\s*\(.*$/, '');
+    // Free-text suffix after an em dash ("path — measured 2026-08-19 against
+    // plugin 0.2.33") is annotation, not filename. Strip it BEFORE the @rev
+    // extraction below — that regex is $-anchored and a suffix would hide the rev.
+    src = src.replace(/\s+—.*$/, '').trim();
     // Strip location suffixes that are NOT part of the filename:
     //   path@<rev>  a pinned commit/branch — verified against git below
     //   path:123    a line number in colon form (the #L123 form is already gone)
@@ -186,6 +190,15 @@ export function classifyAnchors(ctx, note) {
     const revM = src.match(/@([0-9a-fA-F]{7,40}|(?:refs\/|origin\/)[\w./-]+)$/);
     if (revM) { rev = revM[1]; src = src.slice(0, -revM[0].length); }
     src = src.replace(/:\d+(-\d+)?$/, '');
+    // Colon anchor form `repo:path[#anchor]` — the dominant form in real vaults
+    // ("brain-plugin:HANDOVER.md", "brain-plugin:brain/bin/vault-commit.sh").
+    // Normalize to `repo/path` so ONE resolution path serves every form; without
+    // this, a colon anchor with no `/` fell through the prose skip below and the
+    // note was reported as carrying no anchor at all (SPO-354). The `(?!\/)`
+    // guard leaves URL schemes (`https://…`) alone and `{2,}` leaves Windows
+    // drive letters (`C:\…`) alone.
+    const colonM = src.match(/^([\w.-]{2,}):(?!\/)(.+)$/);
+    if (colonM) src = `${colonM[1]}/${colonM[2]}`;
     if (!src) continue;
     // URLs (with or without a scheme — `github.com/org/repo/...` is a link, not
     // a path) point OFF this machine: a PR or a hosted file. Nothing local can

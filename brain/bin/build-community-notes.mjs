@@ -115,7 +115,10 @@ for (const name of names) {
   if (existsSync(outDir)) {
     for (const f of readdirSync(outDir)) {
       if (!f.endsWith('.md')) continue;
-      const text = readFileSync(join(outDir, f), 'utf8');
+      // Normalize CRLF→LF: the vault is autocrlf, so a checked-out stub arrives
+      // with \r\n and the ^---\n frontmatter match would silently see NO prior
+      // identity at all — every filename would churn (SPO-346 lesson, SPO-355).
+      const text = readFileSync(join(outDir, f), 'utf8').replace(/\r\n/g, '\n');
       const fmMatch = text.match(/^---\n([\s\S]*?)\n---/);
       if (!fmMatch) continue;
       const listOf = (key) => {
@@ -210,10 +213,29 @@ for (const name of names) {
     usedBases.set(suffixed.toLowerCase(), (usedBases.get(suffixed.toLowerCase()) ?? 0) + 1);
     return suffixed;
   };
+  // A base name (numeric ` (N)` takeBase suffix stripped — that suffix is only
+  // ever minted by takeBase, never part of a label) that is the CURRENT default
+  // base of some other live community. A matched prior identity may contribute
+  // its old label as an alias, but never such a filename: binding to it steals
+  // the other community's name and collision-suffixes one of them (SPO-355:
+  // relabeled community 9 "Label Guard" matched old occupant "Eval Runner"'s
+  // stub while live community 10 IS Eval Runner — 9 must be
+  // `_COMMUNITY_Label Guard.md`, with the old name surviving only in aliases).
+  const stolenFrom = (base, rawName) => {
+    const root = base.replace(/ \(\d+\)$/, '');
+    return [base, root].some((b) => groups.get(nameKey(b))?.some((n) => n !== rawName));
+  };
   for (const c of candidates) {
     // Collided names get an id-qualified base below; excluded here so they never
     // reserve a base they are forbidden to use.
-    if (collisions.has(c.rawName) || assigned.has(c.rawName) || usedBases.has(c.base.toLowerCase())) continue;
+    if (collisions.has(c.rawName) || assigned.has(c.rawName)) continue;
+    if (stolenFrom(c.base, c.rawName)) {
+      // Keep the matched identity (its old label becomes an alias) without
+      // reserving the base — the filename falls back to the current label's.
+      assigned.set(c.rawName, { ...c, baseTaken: true });
+      continue;
+    }
+    if (usedBases.has(c.base.toLowerCase())) continue;
     assigned.set(c.rawName, c);
     usedBases.set(c.base.toLowerCase(), 1);
   }
@@ -264,7 +286,11 @@ for (const name of names) {
     const defaultBase = `_COMMUNITY_${safeName(rawName)}`;
     // A colliding name may not keep a prior BARE filename — that name now belongs
     // to the disambiguation stub, so stable-identity reuse yields to correctness.
-    const fileBase = collision ? takeBase(qualifiedBase(rawName)) : match ? match.base : takeBase(defaultBase);
+    const fileBase = collision
+      ? takeBase(qualifiedBase(rawName))
+      : match && !match.baseTaken
+        ? match.base
+        : takeBase(defaultBase);
     // ...and it may not claim the bare name as an alias either, or it would
     // shadow the disambiguation stub for anything resolving by alias.
     const aliases = aliasesFor(rawName, fileBase).filter(

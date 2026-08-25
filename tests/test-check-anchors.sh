@@ -340,6 +340,59 @@ for scenario in clean broken unverifiable; do
   fi
 done
 
+# --- 11. colon-form anchors `repo:path[#anchor]` (SPO-354) ----------------
+# The dominant anchor form in real vaults. A colon anchor with no `/` used to
+# fall through the prose skip and the note was reported as carrying NO anchor
+# at all — parseable-but-unresolvable must be UNVERIFIABLE, never no-source.
+echo "--- 11. colon-form anchors (SPO-354) ---"
+sb_new
+mknote colon-root "ghost:HANDOVER.md#locked-decisions--frozen-contracts-do-not-re-litigate"
+run_check
+assert_eq "colon-no-slash/exit-2-not-missing" "2" "$STATUS" \
+  "a parseable anchor that cannot be resolved here is unverifiable, never 'no source at all'" "$(evidence)"
+assert_out_has "colon-no-slash/counts" "0 verified, 0 broken, 1 unverifiable, 0 note(s) with no source:" "$(evidence)"
+assert_out_lacks "colon-no-slash/never-called-no-source" "no source: anchor at all" "$(evidence)"
+assert_out_has "colon-no-slash/names-the-repo-needed" "repo(s) needed: ghost" "$(evidence)"
+
+sb_new
+mknote colon-deep "ghost:docs/design.md"
+run_check
+assert_eq "colon-deep-path/exit-2" "2" "$STATUS" "$(evidence)"
+assert_out_has "colon-deep-path/counts" "0 verified, 0 broken, 1 unverifiable, 0 note(s) with no source:" "$(evidence)"
+
+sb_new
+mknote colon-good "demo:src/a.js#some-section"
+run_check
+assert_eq "colon-verified/exit-0" "0" "$STATUS" \
+  "a colon anchor must resolve exactly like its repo/path slash form" "$(evidence)"
+assert_out_has "colon-verified/counts" "1 verified, 0 broken, 0 unverifiable" "$(evidence)"
+
+# CRLF variant (SPO-346 lesson: the vault is autocrlf; LF-only fixtures once
+# gave a false green). Same colon note, \r\n line endings throughout.
+sb_new
+mknote colon-crlf "ghost:HANDOVER.md#locked-decisions"
+sed -i 's/$/\r/' "$VAULT/wiki/_drafts/colon-crlf.md"
+run_check
+assert_eq "colon-crlf/exit-2" "2" "$STATUS" "$(evidence)"
+assert_out_has "colon-crlf/counts" "0 verified, 0 broken, 1 unverifiable, 0 note(s) with no source:" "$(evidence)"
+assert_out_lacks "colon-crlf/never-called-no-source" "no source: anchor at all" "$(evidence)"
+
+# --- 11b. free-text suffix after an em dash is annotation, not filename ----
+echo "--- 11b. em-dash free-text suffix ---"
+sb_new
+mknote dash-suffix "demo/src/a.js — measured 2026-08-19 against plugin 0.2.33"
+run_check
+assert_eq "dash-suffix/exit-0" "0" "$STATUS" \
+  "prose after ' — ' must be stripped before resolution" "$(evidence)"
+assert_out_has "dash-suffix/counts" "1 verified, 0 broken, 0 unverifiable" "$(evidence)"
+
+# ...and slash-form / semicolon-multiple behavior is unchanged alongside it.
+sb_new
+mknote multi "demo/src/a.js; ghost:docs/design.md"
+run_check
+assert_eq "colon-mixed-multi/exit-2" "2" "$STATUS" "$(evidence)"
+assert_out_has "colon-mixed-multi/counts" "1 verified, 0 broken, 1 unverifiable, 0 note(s) with no source:" "$(evidence)"
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"
