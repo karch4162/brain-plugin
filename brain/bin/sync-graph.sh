@@ -44,11 +44,14 @@
 # `node bin/label-guard.mjs --may-replace`, and it FAILS CLOSED: if node is
 # missing, the module is broken, or the answer is anything we do not recognise,
 # the existing report is KEPT and the sync says so on stderr. graph.json and
-# manifest.json still mirror. A freeze is never permanent-and-silent (INNOV-288):
-# consecutive refusals are counted in <vault>/.brain/ and the message escalates,
-# and once the frozen report's community ids no longer match the mirrored
-# graph.json the sync says the report describes an obsolete clustering and names
-# the remedy. It still never auto-overwrites — the decision stays human.
+# manifest.json still mirror. A refusal whose preserved report has gone STALE is
+# never permanent-and-silent (INNOV-288): those refusals are counted in
+# <vault>/.brain/, the message escalates, and the sync says the report describes
+# an obsolete clustering and names the remedy. A refusal whose report is still
+# FRESH gets one quiet line instead (SPO-366) — for a vault-labeled mirror that
+# refusal is the permanent correct steady state, not a defect. Staleness is a
+# fraction of the report's named ids, LABEL_STALE_THRESHOLD percent (default 10).
+# Neither arm ever auto-overwrites — the decision stays human.
 #
 # SCOPE AUDIT (INNOV-267/268): before a mirror is published, its graph is checked
 # against the standard scope by bin/scope-audit.mjs, in BOTH directions — nodes
@@ -279,10 +282,27 @@ label_guard_verdict() { # existing_report incoming_report
 #   - once the frozen report's community ids demonstrably no longer match the
 #     graph.json we just mirrored, an explicit statement that the report now
 #     describes an OBSOLETE CLUSTERING, plus the concrete remedy.
+# SPO-366 narrowed BOTH to the stale case only: the counter is bumped and the
+# escalation printed only when that same id-staleness check fires. A refusal that
+# is permanent BY DESIGN (a vault-labeled mirror the keyless repo-side build can
+# never out-name) is not something an escalating counter can help with. See the
+# guard site below for the full argument.
 # Both are advisory text only. Every write is best-effort and every parse is
 # validated: a broken counter must never abort a sync under `set -e`, and must
 # never change the copy verdict — `--may-replace` remains the only gate.
 FREEZE_DIR="$VAULT/.brain"
+
+# SPO-366: how stale the preserved report must be before a refusal escalates.
+# A PERCENTAGE of the report's named community ids that graph.json no longer has.
+# Same shape as CONCEPT_GRAPH_THRESHOLD in check-concept-graph.sh, for the same
+# reason: a typo'd threshold must not silently reclassify every mirror, so a
+# non-integer value is ignored with a stderr note and the default is used.
+DEFAULT_STALE_THRESHOLD=10
+STALE_THRESHOLD="${LABEL_STALE_THRESHOLD:-$DEFAULT_STALE_THRESHOLD}"
+if ! [[ "$STALE_THRESHOLD" =~ ^[0-9]+$ ]]; then
+  echo "  note: LABEL_STALE_THRESHOLD='$STALE_THRESHOLD' is not a non-negative integer; using $DEFAULT_STALE_THRESHOLD." >&2
+  STALE_THRESHOLD=$DEFAULT_STALE_THRESHOLD
+fi
 
 freeze_file() { # mirror_name
   printf '%s/label-freeze-%s.count' "$FREEZE_DIR" \
@@ -506,19 +526,74 @@ for repo in "${repos[@]}"; do
       cp "$src/GRAPH_REPORT.md" "$dst/$name-GRAPH_REPORT.md"
       freeze_clear "$name"
     elif [[ "$guard_verdict" == "refuse" ]]; then
-      freeze_n="$(freeze_bump "$name")"
-      echo "preserving labeled report for $name: incoming has $incoming_named named communities, existing has $existing_named — run /brain:label $name to refresh labels" >&2
-      if [[ "$freeze_n" =~ ^[0-9]+$ && "$freeze_n" -ge 2 ]]; then
-        {
-          echo "  FROZEN $freeze_n consecutive syncs: $name's vault report has now been preserved $freeze_n times in a row."
-          echo "  Nothing expires this guard — it will keep refusing until you act. Either run"
-          echo "  /brain:label $name to relabel from the CURRENT graph (the next sync then copies),"
-          echo "  or delete $dst/$name-GRAPH_REPORT.md if its labels are no longer worth keeping."
-        } >&2
-      fi
+      # SPO-366: A REFUSAL IS NOT AUTOMATICALLY A DEFECT. Split on STALENESS.
+      #
+      # For any mirror whose labels were applied vault-side by /brain:label, this
+      # refusal is the CORRECT AND PERMANENT steady state: the repo-side graphify
+      # build is keyless, there is no backflow that pushes vault labels into a
+      # repo's graphify-out/, so the incoming report can never out-name the vault
+      # one and the counts can never converge. Measured on personal-brain's
+      # sports-management mirror: vault names 194, repo-side rebuild names 90 —
+      # forever. Treating that as a regression bumped the freeze counter every
+      # sync, printed an escalation whose only remedy (`/brain:label`) cannot
+      # possibly clear it, and queued a finding that /brain:save auto-filed —
+      # SIX duplicate tickets (SPO-303/358/362/363/365/366) for a guard working
+      # exactly as designed.
+      #
+      # What actually distinguishes the two cases is whether the preserved report
+      # still DESCRIBES the graph we just mirrored, not how many names it has:
+      #   FRESH (stale fraction below LABEL_STALE_THRESHOLD) — the labels are
+      #         current, the guard is succeeding by design. ONE quiet line. No
+      #         freeze bump, no escalation, no finding: a permanent-by-design
+      #         refusal is not a defect, and a ticket filed every sync for it is
+      #         noise that buries the real ones. Note the threshold is a FRACTION,
+      #         not "any missing id" — 3 of 194 is normal drift since the last
+      #         label run and must stay quiet, or nothing changes.
+      #   STALE (fraction at/above the threshold) — the report is now protecting
+      #         text that no longer matches any cluster. Here `/brain:label` IS a
+      #         truthful remedy (it drops staleness to ~0, after which the system
+      #         correctly goes quiet while still refusing the copy), so the full
+      #         INNOV-288 escalation and the INNOV-262 finding both stand.
+      # NEITHER ARM WEAKENS THE REFUSAL. The incoming report never overwrites the
+      # vault's on either path (the tray_pos_flutter label-loss incident), and
+      # graph.json/manifest.json mirror on both, exactly as before.
+      #
+      # `unknown` staleness lands in the quiet arm AND SAYS SO. Per the scope
+      # gate's naming rule (INNOV-277/279) "we could not check" and "we checked
+      # and it is fine" are different sentences; and per INNOV-262 a guard that
+      # could not run is this machine's tooling, not a plugin defect, so it is
+      # never worth a ticket.
       stale_missing=""; stale_total=""
       read -r stale_missing stale_total <<<"$(freeze_staleness "$dst/$name-GRAPH_REPORT.md" "$dst/graph.json")" || true
-      if [[ "$stale_missing" =~ ^[0-9]+$ && "$stale_missing" -gt 0 ]]; then
+      stale_verdict="fresh"
+      if [[ "$stale_missing" =~ ^[0-9]+$ && "$stale_total" =~ ^[0-9]+$ && "$stale_missing" -gt 0 ]]; then
+        # Integer percent, no bc: missing/total >= T/100  <=>  missing*100 >= total*T.
+        if [[ $((stale_missing * 100)) -ge $((stale_total * STALE_THRESHOLD)) ]]; then
+          stale_verdict="stale"
+        fi
+      fi
+
+      if [[ "$stale_verdict" != "stale" ]]; then
+        freeze_clear "$name"   # SPO-366: only an ESCALATING (stale) refusal counts
+        # Two different sentences, never conflated (INNOV-277/279): we measured
+        # and it is fine, vs we could not measure.
+        if [[ "$stale_total" =~ ^[0-9]+$ && "$stale_total" -gt 0 ]]; then
+          stale_note="$stale_missing of $stale_total named ids stale, under the ${STALE_THRESHOLD}% threshold; nothing to do"
+        else
+          stale_note="staleness not measurable from this graph.json, so nothing is claimed either way; quiet per INNOV-262 — a check that could not run is this machine's tooling, not a plugin defect"
+        fi
+        echo "preserving labeled report for $name: incoming has $incoming_named named communities, existing has $existing_named — the vault's labels are the newer ones and were kept ($stale_note)" >&2
+      else
+        freeze_n="$(freeze_bump "$name")"
+        echo "preserving labeled report for $name: incoming has $incoming_named named communities, existing has $existing_named — run /brain:label $name to refresh labels" >&2
+        if [[ "$freeze_n" =~ ^[0-9]+$ && "$freeze_n" -ge 2 ]]; then
+          {
+            echo "  FROZEN $freeze_n consecutive syncs: $name's vault report has now been preserved $freeze_n times in a row."
+            echo "  Nothing expires this guard — it will keep refusing until you act. Either run"
+            echo "  /brain:label $name to relabel from the CURRENT graph (the next sync then copies),"
+            echo "  or delete $dst/$name-GRAPH_REPORT.md if its labels are no longer worth keeping."
+          } >&2
+        fi
         {
           echo "  OBSOLETE CLUSTERING: $stale_missing of $stale_total community ids named in the preserved"
           echo "  report are absent from the graph.json just mirrored. graphify re-mints community ids on"
@@ -526,11 +601,11 @@ for repo in "${repos[@]}"; do
           echo "  the guard is now protecting stale text, not labels. Remedy: run /brain:label $name to"
           echo "  re-derive the labels against the current graph.json."
         } >&2
+        # INNOV-262: queue the regression for auto-filing (not on the error path —
+        # "guard could not run" is this machine's tooling, not a plugin defect).
+        BRAIN_ROOT="$VAULT" bash "$SCRIPT_DIR/file-finding.sh" label-count-regression "$name" \
+          "incoming report names $incoming_named communities, existing names $existing_named" >&2 || true
       fi
-      # INNOV-262: queue the regression for auto-filing (not on the error path —
-      # "guard could not run" is this machine's tooling, not a plugin defect).
-      BRAIN_ROOT="$VAULT" bash "$SCRIPT_DIR/file-finding.sh" label-count-regression "$name" \
-        "incoming report names $incoming_named communities, existing names $existing_named" >&2 || true
     else
       # FAIL CLOSED. We could not establish that the copy is safe, so we do not
       # copy. Loud, because a silently un-refreshed report is its own trap.

@@ -1024,7 +1024,9 @@ rebuild_graph() { # box first last
 }
 
 # --- F1. a REPEATED refusal escalates; the first one does not -------------
-box="$(new_freeze_box 1 10)"
+# SPO-366: only a STALE refusal escalates at all, so this box's graph has
+# re-clustered (900..909) away from the report's ids (1..10) — 100% stale.
+box="$(new_freeze_box 900 909)"
 cp "$box/$DST_REL" "$box/dst.before"
 status="$(run_sync "$box")"
 first_err="$(cat "$box/err.txt")"
@@ -1036,7 +1038,7 @@ else
   pass "freeze/first-refusal-does-not-claim-consecutive"
 fi
 
-rebuild_graph "$box" 1 10
+rebuild_graph "$box" 900 909
 status="$(run_sync "$box")"
 if grep -qi 'consecutive' "$box/err.txt" && grep -qE '(^|[^0-9])2([^0-9]|$)' "$box/err.txt"; then
   pass "freeze/repeated-refusal-escalates"
@@ -1094,13 +1096,13 @@ else
 fi
 
 # --- F4. the counter is CONSECUTIVE: a successful copy resets it ----------
-box="$(new_freeze_box 1 10)"
+box="$(new_freeze_box 900 909)"                    # stale => the escalating arm
 status="$(run_sync "$box")"                       # refusal #1
-rebuild_graph "$box" 1 10
+rebuild_graph "$box" 900 909
 make_report "$box/$SRC_REL" 40 0 "Rebuild Label"  # now allowed (40 >= 10)
 status="$(run_sync "$box")"
-rebuild_graph "$box" 1 10
-make_report "$box/$DST_REL" 60 0 "Vault Label"    # freeze again
+rebuild_graph "$box" 900 909
+make_report "$box/$DST_REL" 60 0 "Vault Label"    # freeze again, still stale
 make_report "$box/$SRC_REL" 2 8 "Rebuild Label"
 status="$(run_sync "$box")"                       # refusal #1 again, not #2
 if grep -qi 'consecutive' "$box/err.txt"; then
@@ -1110,6 +1112,172 @@ if grep -qi 'consecutive' "$box/err.txt"; then
 else
   pass "freeze/successful-copy-resets-the-counter"
 fi
+
+# ============================================ PART H: FRESH-REFUSAL SILENCE ==
+# SPO-366. PART F pinned the ESCALATION. It did not distinguish the two reasons a
+# refusal happens, so every refusal escalated and every refusal queued a finding
+# — and for a vault-labeled mirror the refusal is the permanent correct steady
+# state (the keyless repo-side rebuild can never out-name a /brain:label'd
+# report, and there is no backflow that would let the counts converge). That
+# produced six duplicate tickets for a guard working as designed.
+#
+# The split is on report STALENESS as a FRACTION of the named ids, not on the
+# count and not on "any missing id": the real mirror that triggered this had 3 of
+# 194 ids stale — normal drift since the last label run — and must stay silent.
+# The refusal itself is unchanged on BOTH arms; only the noise differs.
+
+echo "--- H. fresh vs stale refusal (SPO-366) ---"
+
+QUEUE_REL="vault/.brain/findings-queue.jsonl"
+COUNT_REL="vault/.brain/label-freeze-demorepo.count"
+
+# A refused box with $1 named ids (1..$1) in the vault report and graph community
+# ids $2..$3, so the stale FRACTION is dialable: 20 named against ids 2..21 is
+# one missing id (5%), against 3..22 it is two (10%).
+new_frac_box() { # dst_named graph_first graph_last
+  local box; box="$(new_sandbox)"
+  make_report "$box/$DST_REL" "$1" 0 "Vault Label"
+  make_report "$box/$SRC_REL" 2 8 "Rebuild Label"   # 2 named < $1 => refuse
+  make_graph "$box/repos/demorepo/graphify-out/graph.json" "$2" "$3"
+  echo "$box"
+}
+
+queue_lines() { # box -> number of finding lines queued (0 when no queue exists)
+  [[ -f "$1/$QUEUE_REL" ]] || { echo 0; return; }
+  grep -c . "$1/$QUEUE_REL"
+}
+
+# THE BUG, as a negative control. A fresh refusal must queue NOTHING and must not
+# touch the freeze counter — that silence is the entire fix.
+assert_quiet_refusal() { # label box
+  local n; n="$(queue_lines "$2")"
+  if [[ "$n" -eq 0 ]]; then
+    pass "$1/queues-no-finding"
+  else
+    fail "$1/queues-no-finding" \
+      "a fresh (correct-by-design) refusal must queue ZERO findings; got $n" \
+      "queue: [$(cat "$2/$QUEUE_REL" 2>/dev/null)]"
+  fi
+  if [[ -f "$2/$COUNT_REL" ]]; then
+    fail "$1/does-not-bump-the-freeze-counter" \
+      "the freeze counter must not be bumped by a refusal that is permanent by design" \
+      "counter: [$(cat "$2/$COUNT_REL")]"
+  else
+    pass "$1/does-not-bump-the-freeze-counter"
+  fi
+  if grep -qiE 'FROZEN|OBSOLETE CLUSTERING' "$2/err.txt"; then
+    fail "$1/prints-no-escalation" \
+      "a fresh refusal must not print the FROZEN/OBSOLETE escalation" \
+      "stderr: [$(cat "$2/err.txt")]"
+  else
+    pass "$1/prints-no-escalation"
+  fi
+}
+
+assert_loud_refusal() { # label box expected_count
+  local n; n="$(queue_lines "$2")"
+  if [[ "$n" -eq 1 ]]; then
+    pass "$1/queues-exactly-one-finding"
+  else
+    fail "$1/queues-exactly-one-finding" \
+      "a stale refusal must queue exactly one finding; got $n" \
+      "queue: [$(cat "$2/$QUEUE_REL" 2>/dev/null)]"
+  fi
+  assert_eq "$1/bumps-the-freeze-counter" "$3" "$(cat "$2/$COUNT_REL" 2>/dev/null || echo MISSING)"
+  # The evidence string IS the ticket body /brain:save files. A queued line with
+  # a mangled evidence arg still counts as one line, so counting is not enough.
+  if grep -q '"evidence":"incoming report names' "$2/$QUEUE_REL" 2>/dev/null; then
+    pass "$1/queues-the-real-evidence"
+  else
+    fail "$1/queues-the-real-evidence" "the evidence field must BE the count sentence, not merely contain it: a mangled continuation prepends junk and still queues one line"       "queue: [$(cat "$2/$QUEUE_REL" 2>/dev/null)]"
+  fi
+  if grep -qi 'obsolete clustering' "$2/err.txt"; then
+    pass "$1/prints-the-escalation"
+  else
+    fail "$1/prints-the-escalation" "expected the OBSOLETE CLUSTERING block" \
+      "stderr: [$(cat "$2/err.txt")]"
+  fi
+}
+
+# --- H1. fresh refusal (1/20 = 5%, under the default 10%) => silent ---------
+box="$(new_frac_box 20 2 21)"
+cp "$box/$DST_REL" "$box/dst.before"
+status="$(run_sync "$box")"
+assert_quiet_refusal "spo366/fresh" "$box"
+assert_files_identical "spo366/fresh-still-preserves-the-vault-report" \
+  "$box/dst.before" "$box/$DST_REL"
+# The refusal is still REPORTED — silent about blame, not about what happened.
+if grep -q 'preserving labeled report' "$box/err.txt"; then
+  pass "spo366/fresh-still-says-the-report-was-preserved"
+else
+  fail "spo366/fresh-still-says-the-report-was-preserved" \
+    "stderr: [$(cat "$box/err.txt")]"
+fi
+# HARD CONSTRAINT: the copy refusal never weakens graph.json/manifest mirroring.
+assert_files_identical "spo366/fresh-still-mirrors-graph-json" \
+  "$box/repos/demorepo/graphify-out/graph.json" "$box/vault/graphify/demorepo/graph.json"
+assert_files_identical "spo366/fresh-still-mirrors-manifest" \
+  "$box/repos/demorepo/graphify-out/manifest.json" "$box/vault/graphify/demorepo/manifest.json"
+
+# --- H2. stale refusal AT the boundary (2/20 = 10%) => full escalation ------
+box="$(new_frac_box 20 3 22)"
+cp "$box/$DST_REL" "$box/dst.before"
+status="$(run_sync "$box")"
+assert_loud_refusal "spo366/stale-at-threshold" "$box" 1
+assert_files_identical "spo366/stale-still-preserves-the-vault-report" \
+  "$box/dst.before" "$box/$DST_REL"
+assert_files_identical "spo366/stale-still-mirrors-graph-json" \
+  "$box/repos/demorepo/graphify-out/graph.json" "$box/vault/graphify/demorepo/graph.json"
+
+# --- H3. LABEL_STALE_THRESHOLD moves the boundary, both ways ----------------
+box="$(new_frac_box 20 2 21)"            # 5%
+export LABEL_STALE_THRESHOLD=1
+status="$(run_sync "$box")"
+unset LABEL_STALE_THRESHOLD
+assert_loud_refusal "spo366/threshold-1-makes-5-percent-stale" "$box" 1
+
+box="$(new_frac_box 20 3 22)"            # 10%
+export LABEL_STALE_THRESHOLD=50
+status="$(run_sync "$box")"
+unset LABEL_STALE_THRESHOLD
+assert_quiet_refusal "spo366/threshold-50-keeps-10-percent-fresh" "$box"
+
+# --- H4. a typo'd threshold falls back to the default, loudly ---------------
+# The CONCEPT_GRAPH_THRESHOLD precedent: a bad value must never silently
+# reclassify (in either direction). 5% stays quiet, and the note says why.
+box="$(new_frac_box 20 2 21)"
+export LABEL_STALE_THRESHOLD=ten
+status="$(run_sync "$box")"
+unset LABEL_STALE_THRESHOLD
+assert_quiet_refusal "spo366/bad-threshold-falls-back-to-default" "$box"
+if grep -q 'LABEL_STALE_THRESHOLD' "$box/err.txt"; then
+  pass "spo366/bad-threshold-is-reported"
+else
+  fail "spo366/bad-threshold-is-reported" \
+    "a non-numeric threshold must say so on stderr" "stderr: [$(cat "$box/err.txt")]"
+fi
+
+# --- H5. CRLF reports classify the same as LF ------------------------------
+# The vault is an autocrlf checkout: a LF-only fixture gave a false green once
+# already (SPO-346). A \r leaking into the id extraction would collapse the
+# staleness answer to `unknown` and silently put a stale mirror on the quiet arm.
+to_crlf() { local f="$1"; sed 's/$/\r/' "$f" >"$f.crlf" && mv "$f.crlf" "$f"; }
+
+box="$(new_frac_box 20 2 21)"            # fresh, CRLF
+to_crlf "$box/$DST_REL"
+cp "$box/$DST_REL" "$box/dst.before"
+status="$(run_sync "$box")"
+assert_quiet_refusal "spo366/crlf-fresh" "$box"
+assert_files_identical "spo366/crlf-fresh-preserves-the-vault-report" \
+  "$box/dst.before" "$box/$DST_REL"
+
+box="$(new_frac_box 20 3 22)"            # stale, CRLF
+to_crlf "$box/$DST_REL"
+cp "$box/$DST_REL" "$box/dst.before"
+status="$(run_sync "$box")"
+assert_loud_refusal "spo366/crlf-stale" "$box" 1
+assert_files_identical "spo366/crlf-stale-preserves-the-vault-report" \
+  "$box/dst.before" "$box/$DST_REL"
 
 # ========================================== PART G: LIVE-SESSION COMMIT GUARD ==
 # SPO-324. A save is ONE commit. /brain:save step 5 runs this script and is
