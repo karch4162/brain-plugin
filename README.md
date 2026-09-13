@@ -3,7 +3,7 @@
 > **Status:** extracted + cold-install-validated (POC §17.2 steps 2–3). **§17.1 checkbox 1 (packaging/isolation) MET** — `/brain:freshness` ran end-to-end through a live `--plugin-dir` install (slash command → skill → bundled `bin/` script → report). Remaining gate: §10 eval on a real  repo (checkbox 2 = the go/no-go for teams).
 > **Folder/repo name is provisional** — confirm before the first push to vendsy git.
 
-Development repo for the standalone Claude Code **brain plugin** (POC §16): the knowledge
+Development repo for the standalone, agent-agnostic **brain plugin** (POC §16): the knowledge
 *substrate* — the 3-step graph→wiki→raw query rule, the `/save` `/resume` `/freshness` `/wiki-ingest`
 skills, a self-gating graph-before-grep hook, the vault scaffolding + `bin/` scripts, and a
 multi-vault registry. Packaged so it installs in one command instead of the hand-assembled global
@@ -28,7 +28,28 @@ are *consumers* that depend on it, never the reverse.
 ```
 
 Mirrors the `ai-agent-manager` plugin (the reference consumer): marketplace wrapper + nested plugin,
-`${CLAUDE_PLUGIN_ROOT}` for runtime paths. `claude plugin validate ./brain` passes.
+`${CLAUDE_PLUGIN_ROOT}` for legacy runtime paths. The portable runtime uses a neutral `.brain/config.json`
+binding and supports Claude Code, Codex, Grok Build, and Grok Bot workflows. `claude plugin validate ./brain` passes.
+
+## Portable host support
+
+The plugin still installs as a Claude marketplace package, and it also ships a portable root manifest
+(`brain/plugin.json`) plus a Codex manifest (`brain/.codex-plugin/plugin.json`). The shared command line
+interface keeps vault location and session state outside a host's private settings:
+
+```bash
+node brain/bin/brain.mjs init --vault https://github.com/ORG/VAULT.git
+node brain/bin/brain.mjs session start --session "$SESSION_ID"
+node brain/bin/brain.mjs resume --session "$SESSION_ID"
+# work
+node brain/bin/brain.mjs save prepare --session "$SESSION_ID"
+node brain/bin/brain.mjs save apply --session "$SESSION_ID" --summary "Capture checkout behavior"
+```
+
+Remote vault URLs are canonicalized, cloned into the local brain home, and synchronized only by
+fast-forward when the base checkout is clean. Each agent session uses a separate vault worktree and
+branch, so concurrent agents cannot overwrite `hot.md` or commit into each other's branch. See
+[the portable workflow](brain/references/portable.md) and [the central service proposal](docs/central-brain-service.md).
 
 ## Vault governance — the script is the gate
 

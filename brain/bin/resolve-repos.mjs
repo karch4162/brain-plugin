@@ -33,6 +33,7 @@
 
 import { readFileSync, readdirSync, existsSync, writeFileSync } from 'node:fs';
 import { join, resolve, isAbsolute } from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 /**
  * Canonicalize a git remote to `host/owner/name`, so these all compare equal:
@@ -59,12 +60,13 @@ function readJson(file) {
   }
 }
 
-/** Read a checkout's origin remote (first url= wins), normalized. */
+/** Let Git resolve linked-worktree metadata and the specific origin remote. */
 export function remoteOf(dir) {
-  const cfg = join(dir, '.git', 'config');
-  if (!existsSync(cfg)) return null;
-  const m = readFileSync(cfg, 'utf8').match(/^\s*url\s*=\s*(\S+)\s*$/m);
-  return m ? normalizeRemote(m[1]) : null;
+  if (!existsSync(join(dir, '.git'))) return null;
+  try {
+    return normalizeRemote(execFileSync('git', ['-C', dir, 'config', '--get', 'remote.origin.url'],
+      { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'pipe'] }).trim());
+  } catch { return null; }
 }
 
 /**

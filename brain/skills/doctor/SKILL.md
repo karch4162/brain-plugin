@@ -5,6 +5,11 @@ description: "Diagnose and repair brain health — graphify install/launcher/ver
 
 # /brain:doctor — diagnose & repair brain health
 
+## Portable hosts and URL-backed vaults
+
+In Codex, Grok Build, Grok Bot, or a project using a .brain/config.json binding, read [the shared workflow](../../references/portable.md) first and use its matching command flow. It supplies neutral configuration, isolated sessions, and host-specific adaptations. For legacy Claude projects, the workflow below remains supported.
+
+
 The brain delegates the graph engine to **graphify** (POC §16.1), so it inherits graphify's
 operational fragility. The signature failure on Windows: a half-finished `uv tool install --upgrade
 graphifyy` leaves the tool venv with a reparse-point / locked file, so a later removal fails (`os
