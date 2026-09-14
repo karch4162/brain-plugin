@@ -614,6 +614,12 @@ for repo in "${repos[@]}"; do
   fi
   rm -f "$dst/GRAPH_REPORT.md"  # drop legacy generic name if a prior sync left one
   [[ -f "$src/manifest.json" ]] && cp "$src/manifest.json" "$dst/manifest.json"
+  # Input provenance belongs beside the mirror. An older producer may have none.
+  if [[ -f "$src/brain-inputs.json" ]]; then
+    cp "$src/brain-inputs.json" "$dst/brain-inputs.json"
+  elif [[ -f "$dst/brain-inputs.json" ]]; then
+    rm -f "$dst/brain-inputs.json"
+  fi
 
   # Regenerate Obsidian community stubs so [[_COMMUNITY_*]] links resolve.
   # The sibling script lives next to this one (in the plugin); the vault it operates

@@ -5,6 +5,11 @@ description: "Run the brain wiki health check (POC §8 freshness agent): orphans
 
 # /brain:freshness — wiki health check
 
+## Portable hosts and URL-backed vaults
+
+In Codex, Grok Build, Grok Bot, or a project using a .brain/config.json binding, read [the shared workflow](../../references/portable.md) first and use its matching command flow. It supplies neutral configuration, isolated sessions, and host-specific adaptations. For legacy Claude projects, the workflow below remains supported.
+
+
 Runs the deterministic freshness scan and turns its output into a triaged review queue. **Nothing is auto-deleted or auto-edited** — per POC §8 the output is a queue a human (or you, with the user's OK) acts on.
 
 Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd).

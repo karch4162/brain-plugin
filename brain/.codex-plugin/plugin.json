@@ -1,0 +1,19 @@
+{
+  "name": "brain",
+  "version": "0.3.0",
+  "description": "Shared Git-backed knowledge, session continuity, graph context, and wiki maintenance for coding agents.",
+  "author": {
+    "name": "Mason Beard",
+    "email": "mason.beard@tray.com"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Brain",
+    "shortDescription": "Shared knowledge and session continuity.",
+    "longDescription": "Shared Git-backed knowledge, session continuity, graph context, and wiki maintenance for coding agents.",
+    "developerName": "Mason Beard",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Use Brain to resume context and preserve the decisions from this task."
+  }
+}

@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { invocation, normalizeResult } from './hosts.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i >= 0 ? process.argv[i + 1] : d; };
@@ -25,22 +26,31 @@ const RESULTS = arg('--results', join(HERE, 'results'));
 const OUT = arg('--out', join(HERE, 'report.md'));
 const JUDGE = has('--judge');
 const claudeBin = arg('--claude', 'claude');
+const judgeProvider = arg('--judge-provider', 'claude');
+const selectedProvider = arg('--provider', null);
+const baseline = arg('--baseline', 'baseline');
+const treatment = arg('--treatment', 'treatment');
 
 const median = (xs) => { const s = xs.filter((x) => x != null).sort((a, b) => a - b); return s.length ? s[Math.floor((s.length - 1) / 2)] : null; };
 
 const files = existsSync(RESULTS) ? readdirSync(RESULTS).filter((f) => f.endsWith('.json')) : [];
-const rows = files.map((f) => JSON.parse(readFileSync(join(RESULTS, f), 'utf8')));
+const rows = files.map((f) => JSON.parse(readFileSync(join(RESULTS, f), 'utf8')))
+  .filter(r => (!selectedProvider || (r.provider || 'claude') === selectedProvider) && [baseline, treatment].includes(r.condition));
+if (new Set(rows.map(r => r.provider || 'claude')).size > 1) throw new Error('Select --provider to avoid pooling different hosts.');
 if (!rows.length) { console.error(`No result files in ${RESULTS}. Run run-eval.mjs first.`); process.exit(1); }
 
 // LLM-judge a single result's answer vs its expected, → 1 (PASS) / 0 (FAIL) / null (unscored).
 function judge(row) {
+  if (row.exit !== 0) return null;
   if (row.correct != null) return row.correct;        // pre-scored by a human
   if (!JUDGE) return null;
   const text = row.raw?.result ?? '';
   const prompt = `Grade an agent answer strictly. The task EXPECTS:\n${row.expects}\n\nAGENT ANSWER:\n${text}\n\nReply with exactly one word: PASS or FAIL.`;
-  const res = spawnSync(claudeBin, ['-p', prompt, '--output-format', 'json'], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  let p = null; try { p = JSON.parse(res.stdout); } catch { /* unscored on failure */ }
-  return p ? (/\bPASS\b/i.test(p.result || '') ? 1 : 0) : null;
+  const call = invocation(judgeProvider, prompt, { command: judgeProvider === 'claude' ? claudeBin : judgeProvider });
+  const res = spawnSync(call.command, call.args, { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 120000 });
+  if (res.status !== 0) return null;
+  const verdict = normalizeResult(res.stdout || '', 0).result.trim();
+  return verdict === 'PASS' ? 1 : verdict === 'FAIL' ? 0 : null;
 }
 
 // group runs by task|condition
@@ -59,7 +69,7 @@ L.push('|---|---|:--:|--:|--:|--:|:--:|:--:|');
 const tokDeltas = [];
 let regression = false, crossRepoUniqueWin = false;
 for (const t of tasks) {
-  const b = byKey.get(`${t}|baseline`), x = byKey.get(`${t}|treatment`);
+  const b = byKey.get(`${t}|${baseline}`), x = byKey.get(`${t}|${treatment}`);
   const bTok = median((b?.runs || []).map((r) => r.in)), xTok = median((x?.runs || []).map((r) => r.in));
   const bOk = median((b?.runs || []).map((r) => r.correct)), xOk = median((x?.runs || []).map((r) => r.correct));
   const dTok = (bTok && xTok) ? Math.round((100 * (bTok - xTok)) / bTok) : null;
@@ -76,7 +86,8 @@ L.push('', '## Threshold (§10) — all three must hold');
 L.push(`1. ≥20% median token reduction: **${medTok != null ? medTok + '%' : '?'}** → ${medTok == null ? '❓ incomplete' : c1 ? '✅' : '❌'}`);
 L.push(`2. no correctness regression: ${JUDGE ? (regression ? '❌ regression found' : '✅') : '❓ unscored'}`);
 L.push(`3. ≥1 cross-repo task baseline fails & treatment passes: ${JUDGE ? (crossRepoUniqueWin ? '✅' : '❌') : '❓ unscored'}`);
-const pass = JUDGE && c1 && !regression && crossRepoUniqueWin;
+const complete = [...byKey.values()].every(g => g.runs.every(r => r.correct != null)) && tasks.every(t => byKey.has(`${t}|${baseline}`) && byKey.has(`${t}|${treatment}`));
+const pass = complete && c1 && !regression && crossRepoUniqueWin;
 L.push('', pass
   ? '## ✅ Threshold MET — go for team rollout (pending human sign-off on the correctness rubric)'
   : '## ⚠️ Threshold not met / incomplete — see ❓/❌ above');

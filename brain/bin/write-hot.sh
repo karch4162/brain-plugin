@@ -19,7 +19,7 @@
 #   1. pin    — hash hot.md at the moment you read it
 #   2. write  — re-hash it, and install the new content ONLY if it still matches
 #
-# Step 2 is atomic with respect to the check because the script does both. An
+# Step 2 holds a shared mkdir lock across the comparison and replacement. An
 # agent cannot do this by hand: "verify immediately before the rewrite" is not
 # something you can promise across a dozen tool calls, and the file is already
 # gone by the time you notice. Hence a script, not a rule.
@@ -60,6 +60,13 @@ VAULT="${BRAIN_ROOT:-${CLAUDE_PROJECT_DIR:-$PWD}}"
 HOT="$VAULT/wiki/hot.md"
 PIN_DIR="$VAULT/.brain"
 PIN_FILE="$PIN_DIR/hot.pin"
+SESSION_ID="${BRAIN_SESSION_ID:-${CLAUDE_CODE_SESSION_ID:-${GROK_SESSION_ID:-}}}"
+if [[ -n "$SESSION_ID" ]]; then
+  case "$SESSION_ID" in
+    *[!A-Za-z0-9._-]*) echo 'HOT-WRITE: REFUSED - invalid session id' >&2; exit 1 ;;
+  esac
+  PIN_FILE="$PIN_DIR/hot-$SESSION_ID.pin"
+fi
 
 refuse() { # reason-line, then extra lines
   {
@@ -110,6 +117,18 @@ esac
 if [[ ! -d "$VAULT/wiki" ]]; then
   refuse "'$VAULT' doesn't look like a brain vault (no wiki/)" \
     "  Set BRAIN_ROOT to the vault root."
+fi
+
+# Both pin and write participate: pin must not observe an intermediate write.
+# Locks are never reaped on a guessed timeout; that could evict a slow writer.
+if [[ "$MODE" != "--status" ]]; then
+  mkdir -p "$PIN_DIR" 2>/dev/null || refuse "cannot create pin directory"
+  LOCK_DIR="$PIN_DIR/hot-write.lock"
+  mkdir "$LOCK_DIR" 2>/dev/null || refuse "another hot.md operation holds $LOCK_DIR" \
+    "  Retry after it finishes. Remove the lock only after confirming no writer remains."
+  trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 fi
 
 # --- --pin ------------------------------------------------------------------
