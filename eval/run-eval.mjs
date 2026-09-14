@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { invocation, normalizeResult } from './hosts.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const arg = (f, d) => { const i = process.argv.indexOf(f); return i >= 0 ? process.argv[i + 1] : d; };
@@ -33,7 +34,7 @@ const config = existsSync(configPath)
   : { claudeBin: 'claude', repos: {}, conditions: { baseline: { claudeArgs: [], env: {} }, treatment: { claudeArgs: [], env: {} } } };
 
 const tasks = readFileSync(tasksPath, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
-mkdirSync(OUT, { recursive: true });
+if (!DRY) mkdirSync(OUT, { recursive: true });
 
 let planned = 0;
 for (const task of tasks) {
@@ -41,25 +42,27 @@ for (const task of tasks) {
   for (const [cond, spec] of Object.entries(config.conditions)) {
     for (let r = 1; r <= RUNS; r++) {
       planned++;
-      const cmd = config.claudeBin || 'claude';
-      const args = ['-p', task.prompt, '--output-format', 'json', ...(spec.claudeArgs || [])];
+      const provider = spec.provider || config.provider || 'claude';
+      const { command: cmd, args } = invocation(provider, task.prompt, { ...spec, command: spec.command || config.command || (provider === 'claude' ? config.claudeBin : undefined) });
       if (DRY || !repoPath) {
         console.log(`[dry] ${task.id}/${cond}/${r}  cwd=${repoPath || '<repo path TODO>'}  ${cmd} ${args.map((a) => JSON.stringify(a)).join(' ')}`);
         continue;
       }
+      const started = Date.now();
       const res = spawnSync(cmd, args, {
         cwd: repoPath,
         env: { ...process.env, ...(spec.env || {}) },
         encoding: 'utf8',
         maxBuffer: 64 * 1024 * 1024,
+        timeout: config.timeoutMs || 600000,
+        windowsHide: true,
       });
-      let parsed = null;
-      try { parsed = JSON.parse(res.stdout); } catch { /* keep raw stderr for triage */ }
-      const outFile = join(OUT, `${task.id}-${cond}-${r}.json`);
+      const parsed = normalizeResult(res.stdout || '', Date.now() - started);
+      const outFile = join(OUT, `${provider}-${task.id}-${cond}-${r}.json`);
       writeFileSync(outFile, JSON.stringify({
-        task: task.id, category: task.category, condition: cond, run: r,
+        task: task.id, category: task.category, condition: cond, run: r, provider,
         cross_repo: !!task.cross_repo, expects: task.expects,
-        raw: parsed, stderr: (res.stderr || '').slice(0, 2000), exit: res.status,
+        raw: parsed, stderr: (res.stderr || '').slice(0, 2000), exit: res.status, error: res.error?.code || null,
       }, null, 2));
       const u = parsed?.usage || {};
       console.log(`${task.id}/${cond}/${r}: in=${u.input_tokens ?? '?'} out=${u.output_tokens ?? '?'} turns=${parsed?.num_turns ?? '?'} ${parsed?.duration_ms ?? '?'}ms`);

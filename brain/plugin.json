@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "brain",
+  "version": "0.3.1",
+  "description": "Shared Git-backed knowledge, session continuity, graph context, and wiki maintenance for coding agents.",
+  "author": {
+    "name": "Mason Beard",
+    "email": "mason.beard@tray.com"
+  }
+}

@@ -25,7 +25,9 @@
 // Track B handshake (POC §17.1).
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, relative, isAbsolute } from 'node:path';
+import { createHash } from 'node:crypto';
+import { graphStatus } from '../core/graph-inputs.mjs';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 
@@ -48,16 +50,18 @@ try {
   process.exit(0); // malformed payload → stay out of the way
 }
 
-const cwd = input.cwd || process.cwd();
-const toolName = input.tool_name || '';
-const toolInput = input.tool_input || {};
+const toolInput = input.tool_input || input.toolInput || {};
+const cwd = resolve(toolInput.workdir || input.cwd || input.workspaceRoot || process.cwd());
+const rawToolName = input.tool_name || input.toolName || '';
+const toolName = /^(Bash|bash|exec_command|shell_command|shell)$/.test(rawToolName) ? 'Bash'
+  : /^(Grep|grep)$/.test(rawToolName) ? 'Grep' : rawToolName;
 
 // Only care about text-search tools.
 let isSearch = false;
 if (toolName === 'Grep') {
   isSearch = true;
 } else if (toolName === 'Bash') {
-  const cmd = String(toolInput.command || '');
+  const cmd = String(toolInput.command || toolInput.cmd || '');
   // word-boundary match so we don't fire on e.g. "graphql" or "ripgrep-config"
   isSearch = /(^|[\s|&;(])(grep|rg|ag|findstr)(\s|$)/.test(cmd);
 } else {
@@ -73,17 +77,20 @@ if (!existsSync(graphPath)) process.exit(0);
 if (toolName === 'Grep' && toolInput.path) {
   const target = String(toolInput.path);
   if (/^([A-Za-z]:[\\/]|\/)/.test(target)) {
-    const norm = (p) => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-    if (!norm(target).startsWith(norm(cwd))) process.exit(0);
+    const rel = relative(cwd, resolve(target));
+    if (rel === '..' || rel.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(rel)) process.exit(0);
   }
 }
 
 // Gate 2: once per session. Marker in the OS temp dir keyed by session_id.
-const sessionId = String(input.session_id || 'unknown').replace(/[^A-Za-z0-9_-]/g, '');
-const marker = join(tmpdir(), `graph-before-grep-${sessionId}`);
+const sessionId = input.session_id || input.sessionId || process.env.BRAIN_SESSION_ID || process.env.GROK_SESSION_ID;
+// A shared "unknown" marker would suppress every future unidentified session.
+if (!sessionId) process.exit(0);
+const markerId = createHash('sha256').update(`${sessionId}\0${cwd}`).digest('hex');
+const marker = join(tmpdir(), `graph-before-grep-${markerId}`);
 if (existsSync(marker)) process.exit(0);
 try {
-  writeFileSync(marker, new Date().toISOString());
+  writeFileSync(marker, new Date().toISOString(), { flag: 'wx' });
 } catch {
   // Can't dedupe → better to stay silent than to spam every call.
   process.exit(0);
@@ -119,6 +126,11 @@ if (builtAt && head) {
 } else {
   freshness = 'Graph freshness unknown — treat graph answers as advisory.';
 }
+
+const inputs = graphStatus(cwd);
+if (inputs.state === 'stale') freshness = `Graph is STALE: ${inputs.reason}`;
+else if (inputs.state === 'fresh') freshness = `Graph inputs match the recorded build (${inputs.files} files; ${inputs.extractor}).`;
+else if (existsSync(join(cwd, 'graphify-out/brain-inputs.json'))) freshness = `Graph freshness unknown: ${inputs.reason}`;
 
 const reminder =
   `graph-before-grep (once per session): this repo has a graphify graph. ${freshness} ` +

@@ -1,4 +1,4 @@
-# brain — Claude Code plugin
+# brain — agent-agnostic knowledge plugin
 
 A git-backed, **agent-queryable knowledge substrate**. The brain makes every agent
 session reason from accumulated decisions, gotchas, and cross-repo contracts instead
@@ -21,6 +21,16 @@ hand-assembled set of global hooks + skills + a hand-written query rule (POC §1
 | **graph-before-grep** | `hooks/` | self-gating PreToolUse nudge — once per session, staleness-aware (built-from commit vs HEAD; graph-first when fresh, advisory otherwise); fires only where `graphify-out/graph.json` exists. |
 | **Multi-vault registry** | `skills/init` + `templates/brain-registry.example.json` | route a project's mirror+wiki to the right vault (personal vs team). POC §16.2. |
 | **Health/repair** | `skills/doctor` | `/brain:doctor` diagnoses + repairs graphify launcher/version drift, the vault binding, the registry, and stale interpreter caches. |
+
+## Portable hosts
+
+Claude Code remains fully supported. Codex and Grok Build use the shared skills and `brain/bin/brain.mjs`;
+Grok Bot can use the same GitHub-backed vault URL and transcript import flow. Run `node brain/bin/brain.mjs init --vault
+https://github.com/ORG/VAULT.git` from a project to create a neutral `.brain/config.json` binding, then
+start an isolated session worktree with `node brain/bin/brain.mjs session start --session "$SESSION_ID"`.
+
+The host command mappings, session and save flow, graph inputs contract, and capabilities matrix are in
+[references/portable.md](references/portable.md).
 
 ## Setup & usage — by scenario (start here)
 
