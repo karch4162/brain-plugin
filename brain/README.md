@@ -56,7 +56,7 @@ Updates key off the version in `brain/.claude-plugin/plugin.json` — releases m
 | **F · Tending the vault** | `/brain:freshness` · `/brain:tidy` · `/brain:label` · `/brain:wiki-ingest` · `/brain:promote` | Run from the vault. `freshness` = rot review queue (orphans/dead links/stale); `tidy` = apply its mechanical subset as one reviewed batch; `label` = name unlabeled graph communities vault-side (no checkout, preserves existing names); `wiki-ingest` = distill harvested chats → draft notes; `promote` = graduate drafts to trusted via one PR (14-day promote-or-drop TTL). |
 | **G · Graph / graphify acting broken** | `/brain:doctor` | Diagnoses + repairs the graphify launcher/version, the vault binding, the registry, and stale interpreter caches. |
 
-> **Per-machine, not per-clone:** the vault binding and registry (`~/.claude/brain/registry.json`) are machine-specific. Cloning a linked repo onto a new laptop always needs one `/brain:init` re-run (scenario B) — it's quick, non-destructive, and writes only to the gitignored local override.
+> **Per-machine, not per-clone:** the vault binding and registry (`~/.claude/brain/registry.json`) are machine-specific. The findings tracker is the exception — it is committed in the vault's `brain.json`, so every clone files plugin bugs to the same board. Cloning a linked repo onto a new laptop always needs one `/brain:init` re-run (scenario B) — it's quick, non-destructive, and writes only to the gitignored local override.
 
 ## Working with the wiki
 

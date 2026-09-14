@@ -2,7 +2,7 @@
 # test-file-finding.sh — deterministic quality gate for brain/bin/file-finding.sh
 #
 # INNOV-262: when a guard detects a defect it cannot self-heal, it queues an
-# auto-filed Jira finding instead of failing silently. Scripts have no Jira
+# auto-filed tracker finding instead of failing silently. Scripts have no tracker
 # credentials, so the script's whole job is the QUEUE half of queue+drain:
 #
 # Contract under test:
@@ -131,8 +131,10 @@ run_ff mis-scoped-graph store-hub "SCOPE-AUDIT: OUT-OF-SCOPE - 14 node(s) built 
 assert_eq "write/exit-0" "0" "$STATUS" "$(evidence "$BOX")"
 assert_prefix "write/stdout-first-line-QUEUED" "FINDING: QUEUED" "$(first_line "$BOX/out.txt")" \
   "$(evidence "$BOX")"
-assert_contains "write/user-told-a-ticket-is-coming" "INNOV" "$(first_line "$BOX/out.txt")" \
+assert_contains "write/user-told-a-ticket-is-coming" "tracker" "$(first_line "$BOX/out.txt")" \
   "the user is TOLD a ticket will be filed, never asked to file it" "$(evidence "$BOX")"
+assert_not_contains "write/message-names-no-board" "INNOV" "$(first_line "$BOX/out.txt")" \
+  "the destination lives in the vault's brain.json; the script must not hardcode one" "$(evidence "$BOX")"
 assert_eq "write/queue-has-one-line" "1" "$(queue_lines)" "$(evidence "$BOX")"
 assert_contains "write/entry-carries-class" '"class":"mis-scoped-graph"' "$(queue_all)" "$(evidence "$BOX")"
 assert_contains "write/entry-carries-repo" '"repo":"store-hub"' "$(queue_all)" "$(evidence "$BOX")"
