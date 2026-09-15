@@ -1,18 +1,20 @@
 #!/usr/bin/env bash
-# file-finding.sh — queue a self-detected plugin defect for automatic Jira filing.
+# file-finding.sh — queue a plugin defect for automatic tracker filing.
 #
 # When a guard detects a condition it cannot self-heal (shrink-guard/label
 # refusal, unresolvable source: anchor, mis-scoped graph, label-count
-# regression), it calls this script instead of failing silently. Agents kept
-# logging these bugs in random places; this makes the path mechanical.
+# regression), it calls this script instead of failing silently — and so does
+# an agent that hits a plugin bug (templates/CLAUDE.brain.md says so). Agents
+# kept logging these bugs in random places; this makes the path mechanical.
 #
-# QUEUE + DRAIN (INNOV-262): scripts have NO Jira credentials, so this script
-# never talks to Jira. It ALWAYS writes the finding to a local queue first:
+# QUEUE + DRAIN (INNOV-262): scripts have NO tracker credentials, so this
+# script never talks to a tracker. It ALWAYS writes the finding to a local queue:
 #
 #   <vault>/.brain/findings-queue.jsonl     (one JSON object per line)
 #
-# The skill layer (an agent with Jira MCP access) drains the queue — see the
-# "Drain the findings queue" section in skills/save/SKILL.md. Dedup is by a
+# The skill layer (an agent with tracker MCP access) drains the queue to the
+# tracker committed in <vault>/brain.json — see the "Drain the findings queue"
+# section in skills/save/SKILL.md. Dedup is by a
 # stable fingerprint: sha over defect-class + repo + NORMALIZED evidence
 # (lowercased, digits stripped, whitespace collapsed — so "3 vs 12" and
 # "5 vs 12" are the same recurring defect). A repeat finding bumps `count`
@@ -88,5 +90,7 @@ else
   printf '%s\n' "$line" >>"$QUEUE" 2>/dev/null || skip "queue $QUEUE is not writable"
 fi
 
-echo "FINDING: QUEUED $CLASS for $REPO ($FP, seen ${count}x) — an INNOV ticket will be filed automatically at the next /brain:save drain; you do not need to file it."
+# Tracker-blind on purpose: the drain resolves the destination from the vault's
+# committed brain.json, so this message must not name a board.
+echo "FINDING: QUEUED $CLASS for $REPO ($FP, seen ${count}x) — it will be filed to this vault's tracker (brain.json) at the next /brain:save drain; you do not need to file it."
 exit 0

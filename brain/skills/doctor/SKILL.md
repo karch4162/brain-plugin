@@ -65,6 +65,11 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
     - **Exit `0` (`CONCEPT-GRAPH: SKIPPED`) →** ⚠️ "skipped — <reason>", never ✅ (check 7's rule: a false ✅ is what this exists to prevent). A vault with no wiki graph yet legitimately skips.
     - **Exit `1` (`CONCEPT-GRAPH: STALE`) →** ⚠️ **informational, no scripted repair** (like check 4c) — the remedy is `/brain:save` step 5c's graphify refresh (`wiki --update` through the *skill*), which the script's own remedy text names. Relay the line **verbatim**; it counts wiki notes changed (per git) since the last commit touching `graphify-out/graph.json` — never `manifest.json` (INNOV-271).
     - Skip if check 4 failed — bind a vault first. A non-vault dir reports SKIPPED, not a crash.
+11. **Findings tracker committed in the vault** — read `<vault>/brain.json` and confirm `git -C <vault> ls-files --error-unmatch brain.json` succeeds. The tracker lives there (not the per-machine registry) so every teammate's agent files plugin bugs to the same board; a vault without it leaves each machine's findings queued with nowhere to go.
+    - `tracker` present (`jira` + `project`, `linear` + `team`, or `none`) **and** tracked by git → ✅ quote the destination.
+    - Present but **not committed** → ⚠️ "only this machine knows the tracker" — remedy: commit it deliberately on a branch (`git -C <vault> commit -o brain.json -m 'chore: set findings tracker'`).
+    - Missing, unparseable, or no/invalid `tracker` → ⚠️ **informational, no scripted repair** — the next `/brain:save` drain (or `/brain:init`) asks and writes it. If this machine's registry entry still carries a legacy `tracker` field, offer to write that value into `brain.json` instead of asking fresh.
+    - Skip if check 4 failed.
 
 ## Repairs (ask before R1 — it reinstalls a global tool)
 
@@ -126,5 +131,6 @@ Brain doctor — <vault name or path>
   brain plugin         ❌ installed 0.2.19, marketplace offers 0.2.22 → offer R6
   vault allowlist      ❌ .saveinclude missing 1 of 7: graphify/ (bin/sync-graph.sh) → offer R7
   vault gitignore      ❌ .gitignore missing 1 of 6: .brain/ (machine-local session state) → offer R8
+  findings tracker     ⚠️ brain.json has no tracker — next /brain:save asks and writes it
 <then apply confirmed repairs and re-check>
 ```
