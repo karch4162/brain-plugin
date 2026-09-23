@@ -25,7 +25,16 @@ are *consumers* that depend on it, never the reverse.
     │         build-community-notes.mjs, harvest-chats.mjs}
     └── templates/{CLAUDE.brain.md, graphifyignore, saveinclude, gitignore,
                    brain-registry.example.json, vault-skeleton/}
+└── wave/                           # second plugin (name: "wave") — /wave:wave
+    ├── .claude-plugin/plugin.json
+    └── skills/wave/{SKILL.md, spawn.sh, review.sh, tiebreak.sh, triage.sh,
+                     status.sh, cost.sh, lib.sh, config.example.env}
 ```
+
+`wave` runs Orca worker waves on agent-ready Linear or Jira issues. It is a *consumer* of brain
+(`/brain:resume`, `/brain:save`), never a dependency. A repo opts in with a committed
+`.claude/wave/config.env` (this repo's points at Jira INNOV + label `brain-plugin`) and optional
+`.claude/wave/notes.md` for project rules. Install: `claude plugin install wave@brain-marketplace`.
 
 Mirrors the `ai-agent-manager` plugin (the reference consumer): marketplace wrapper + nested plugin,
 `${CLAUDE_PLUGIN_ROOT}` for legacy runtime paths. The portable runtime uses a neutral `.brain/config.json`

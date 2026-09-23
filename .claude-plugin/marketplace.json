@@ -14,6 +14,15 @@
       "license": "MIT",
       "category": "knowledge",
       "keywords": ["knowledge-graph", "graphify", "obsidian", "memory", "rag", "second-brain", "agent-context", "wiki"]
+    },
+    {
+      "name": "wave",
+      "source": "./wave",
+      "description": "Run waves of unsupervised Orca workers on agent-ready Linear or Jira issues, configured per repo (.claude/wave/config.env). A consumer of brain, never a dependency of it. Version lives in wave/.claude-plugin/plugin.json only.",
+      "author": { "name": "Mason Beard", "email": "mason.beard@gmail.com" },
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["orca", "agents", "orchestration", "linear", "jira"]
     }
   ]
 }
