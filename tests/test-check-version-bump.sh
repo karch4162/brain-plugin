@@ -109,6 +109,31 @@ new_sandbox
 st="$(run_check main)"
 assert_eq "no-changes/exit-0" "0" "$st"
 
+echo "--- 6. every plugin dir is gated, not just brain/ ---"
+# A marketplace can carry several plugins; each has its own version and its own
+# frozen-cache risk if it ships without a bump.
+new_sandbox
+mkdir -p "$BOX/wave/.claude-plugin"
+printf '{"name":"wave","version":"0.1.0"}\n' >"$BOX/wave/.claude-plugin/plugin.json"
+git -C "$BOX" add -A && git -C "$BOX" commit -q -m "add wave" && git -C "$BOX" branch -q -f wave-base
+printf 'changed\n' >"$BOX/wave/SKILL.md"
+commit_all "wave change, no bump"
+st="$(run_check wave-base)"
+assert_eq "wave-no-bump/exit-1" "1" "$st"
+assert_contains "wave-no-bump/names-plugin-json" "$(cat "$BOX/out.txt")" "wave/.claude-plugin/plugin.json"
+printf '{"name":"wave","version":"0.1.1"}\n' >"$BOX/wave/.claude-plugin/plugin.json"
+commit_all "wave bump"
+st="$(run_check wave-base)"
+assert_eq "wave-bump/exit-0" "0" "$st"
+
+echo "--- 7. a brand-new plugin needs no bump ---"
+new_sandbox
+mkdir -p "$BOX/wave/.claude-plugin"
+printf '{"name":"wave","version":"0.1.0"}\n' >"$BOX/wave/.claude-plugin/plugin.json"
+commit_all "add wave"
+st="$(run_check main)"
+assert_eq "new-plugin/exit-0" "0" "$st"
+
 echo
 echo "$PASSED passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]
