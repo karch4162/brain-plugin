@@ -2,7 +2,7 @@
   "name": "brain-marketplace",
   "owner": {
     "name": "Mason Beard",
-    "email": "mason.beard@tray.com"
+    "email": "mason.beard@gmail.com"
   },
   "description": "The Brain — a git-backed, agent-queryable knowledge substrate (Graphify code graph + Obsidian-style concept wiki + the graph→wiki→raw query rule). Infrastructure that any Claude Code session depends on; orchestrators are consumers, never the reverse.",
   "plugins": [
@@ -10,7 +10,7 @@
       "name": "brain",
       "source": "./brain",
       "description": "Standalone knowledge-substrate plugin: the 3-step graph→wiki→raw query rule, /init /save /resume /freshness /tidy /label /wiki-ingest /doctor skills, a self-gating graph-before-grep hook, the vault scaffolding + bin scripts, and a multi-vault registry for routing a project to the right brain (personal vs team). Version is intentionally NOT set here — it is resolved from brain/.claude-plugin/plugin.json (single source of truth); bump it there only.",
-      "author": { "name": "Mason Beard", "email": "mason.beard@tray.com" },
+      "author": { "name": "Mason Beard", "email": "mason.beard@gmail.com" },
       "license": "MIT",
       "category": "knowledge",
       "keywords": ["knowledge-graph", "graphify", "obsidian", "memory", "rag", "second-brain", "agent-context", "wiki"]

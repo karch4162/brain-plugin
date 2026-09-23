@@ -1,10 +1,10 @@
 {
   "name": "brain",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Shared Git-backed knowledge, session continuity, graph context, and wiki maintenance for coding agents.",
   "author": {
     "name": "Mason Beard",
-    "email": "mason.beard@tray.com"
+    "email": "mason.beard@gmail.com"
   },
   "skills": "./skills/",
   "interface": {
