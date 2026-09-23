@@ -160,6 +160,17 @@ Resolve the vault root as `$BRAIN_ROOT` (else the current project dir / cwd). Al
 
    **`.saveinclude` is the permission model** — one path/glob per line, `#` comments and blanks ignored. The default allowlist covers `logs/`, `wiki/hot.md`, `wiki/log.md`, the `graphify-out/` wiki-graph artifacts and the `graphify/` repo mirrors. **Customize what may be committed by editing `.saveinclude`** — add a path to allow it, leave a path off to keep it local/manual; `bash "${CLAUDE_PLUGIN_ROOT}/bin/vault-commit.sh" --print-allowlist` shows the resolved list. Private content — harvested `chats/` (also gitignored) or anything off the list — is never published by accident. **Trusted `wiki/` notes are intentionally not allowlisted**: knowledge changes go via PR, staged separately, which is what [[promote]] does. **Do not `git push` unless the user asks.**
 
+6b. **Leave the checkout on the default branch and reap the merged `brain/*` branches.** Step 6 commits onto a working branch and stops there — nothing pushes it, nothing merges it, nothing deletes it, and the checkout is left sitting on it, so the **next** session starts on a stale branch by construction (measured on one vault: 29 local branches, 27 fully merged; the one that gave a session a 74-commits-behind briefing was one of the merged ones — INNOV-309, INNOV-301). Run this **after** step 6 has reported, and **before** step 7:
+   ```bash
+   bash "${CLAUDE_PLUGIN_ROOT}/bin/reap-branches.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
+   ```
+   - **Exit `0` (`REAP: OK`) →** the checkout is on the default branch; the line says how many merged branches were deleted and names any it kept. Quote it in the output block.
+   - **Exit `1` (`REAP: REFUSED`) →** **nothing was changed** — no branch switched, none deleted. Relay the script's `REAP: REFUSED` line **verbatim** and carry on; the save itself already succeeded. The cost of a refusal is branch litter, never lost work. **Do not work around it with raw git** — a forced checkout here is how uncommitted work disappears.
+
+   **It cannot delete unmerged work.** It uses `git branch -d` (lowercase) only, which git itself refuses on any branch not fully merged — so this session's own branch survives whenever its commit hasn't landed yet, and the script reports it as KEPT. It also refuses outright while **another session is live** in the checkout (HEAD belongs to the working tree, not to a session), on a **detached HEAD**, and whenever `git switch` won't proceed. It touches only the `brain/*` namespace, so a human's own branches are never its business.
+
+   **Order matters: after step 6, before step 7.** After step 6 because the pin from `session.sh --print-pin` names the branch this session started on — reaping first would move HEAD out from under `vault-commit.sh`, which would then correctly refuse the save's own commit. Before step 7 is simply tidiness; `--end` matches on session id and does not read HEAD, so it is unaffected either way.
+
 7. **Close the session record.** Once step 6 has reported (committed, nothing-to-commit, or refused), the save is over — clear the record so it doesn't linger and make the next command warn about a session that ended:
    ```bash
    bash "${CLAUDE_PLUGIN_ROOT}/bin/session.sh" --end   # from the vault root, or with BRAIN_ROOT=<vault> set
@@ -176,6 +187,7 @@ hot.md <refreshed (<n> words / <budget> budget) | refresh SKIPPED (branch not fr
 Graph sync: <synced repos | not needed this session>
 Concept graph: <the CONCEPT-GRAPH: line, verbatim>
 Commit: <committed <n> paths on '<branch>' (not pushed) | nothing to commit | REFUSED — <script's reason>>
+Branches: <the REAP: line, verbatim>
 Open loops carried forward: <n>
 ```
 
