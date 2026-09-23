@@ -51,7 +51,7 @@ export function bashScript(script, args, vault, session) {
 // This dispatch is deliberately restricted to bundled maintenance commands.
 export function runMaintenance(script, args, vault, session) {
   const allowed = ['freshness.mjs', 'label-communities.mjs', 'build-community-notes.mjs', 'check-anchors.mjs',
-    'scope-audit.mjs', 'resolve-repos.mjs', 'sync-graph.sh', 'changed-wiki-notes.sh', 'check-concept-graph.sh',
+    'scope-audit.mjs', 'resolve-repos.mjs', 'narrow-detect.mjs', 'sync-graph.sh', 'changed-wiki-notes.sh', 'check-concept-graph.sh',
     'check-allowlist.sh', 'check-gitignore.sh', 'check-hot-budget.sh', 'check-freshness.sh', 'vault-commit.sh'];
   if (!allowed.includes(script) || !Array.isArray(args) || args.some(a => typeof a !== 'string')) throw new Error('Unsupported maintenance script or arguments.');
   return locked(join(vault, '.brain/write.lock'), () => {
