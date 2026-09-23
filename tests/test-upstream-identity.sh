@@ -55,7 +55,9 @@ fi
 # rather than grepping the file text keeps a reformat (indentation, key order)
 # from turning into a false failure.
 #   marketplace.name | plugin count | plugins[0].name | plugins[0].source | plugin.json name
-EXPECTED='brain-marketplace|1|brain|./brain|brain'
+# Plugin count is 2 since the wave plugin (a brain consumer) joined the marketplace;
+# plugins[0] must stay brain.
+EXPECTED='brain-marketplace|2|brain|./brain|brain'
 
 # identity_of <marketplace.json> <plugin.json> — the one function both the gate
 # and the negative controls go through. Returns 1 if either file fails to parse.
@@ -105,7 +107,7 @@ fi
 
 # 2. A correctly-branded fixture must NOT trip the gate. A gate that flags
 #    correct text is worse than no gate: it trains people to ignore this suite.
-printf '{"name":"brain-marketplace","plugins":[{"name":"brain","source":"./brain"}]}\n' \
+printf '{"name":"brain-marketplace","plugins":[{"name":"brain","source":"./brain"},{"name":"wave","source":"./wave"}]}\n' \
   >"$TMPROOT/ok-marketplace.json"
 printf '{"name":"brain","version":"9.9.9"}\n' >"$TMPROOT/ok-plugin.json"
 ok_identity="$(identity_of "$TMPROOT/ok-marketplace.json" "$TMPROOT/ok-plugin.json")"
