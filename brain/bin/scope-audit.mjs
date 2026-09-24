@@ -50,7 +50,7 @@
 // and its vault-relative `graphify/<r>/graph.json` path is now `--graph`/`--mirror`.
 //
 // A NOTE ON `packages/`: it is deliberately NOT in the denylist even though
-// CLAUDE.md's prose once listed it under "deps". `hub-packages` is a real
+// CLAUDE.md's prose once listed it under "deps". `mono-packages` is a real
 // monorepo whose source lives under package directories — denying `packages/`
 // would have flagged an entire repo's source as out of scope. The mechanically
 // enforced set below is the authority; see `--print-denylist`.
@@ -136,7 +136,7 @@ const OUT_PARTS = [
   String.raw`_(test|spec)\.`,
   // build/config manifests and test scaffolding, BY NAME. `*.test.*`/`*.spec.*`
   // does NOT match jest.setup.ts or vitest.config.ts — that is precisely the gap
-  // that let build tooling into hub's graph, so they are named explicitly.
+  // that let build tooling into that monorepo's graph, so they are named explicitly.
   String.raw`(^|/)(jest[.-]|vitest\.|eslint\.|\.eslintrc|tsconfig|package\.json|package-lock|components\.json|next\.config|postcss|tailwind\.config|entrypoint\.sh|Dockerfile)`,
   // the generic config-manifest class: <anything>.config.{js,ts,mjs,cjs}
   String.raw`(^|/)[^/]+\.config\.(js|ts|mjs|cjs)$`,

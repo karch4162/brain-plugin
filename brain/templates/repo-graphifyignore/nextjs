@@ -60,7 +60,7 @@ docker-compose*.yml
 # --- tests and test scaffolding --------------------------------------------
 # BY NAME, because *.test.* / *.spec.* does NOT match jest.setup.ts,
 # jest.config.js or vitest.config.ts — that gap is how test tooling got into
-# hub's graph while the pattern-based exclusions "looked complete".
+# a real monorepo's graph while the pattern-based exclusions "looked complete".
 test/
 tests/
 __tests__/

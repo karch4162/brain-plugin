@@ -26,7 +26,7 @@
 # falling back to $REPOS_DIR/<name> (default: the vault's parent dir) when the
 # vault has no map or the name is not in it. The alias map is what lets a mirror
 # live somewhere other than a same-named directory one level down — `mirror-x`
-# is the repo cloned as `other-name/`, `repo-a` is a directory inside the monorepo clone.
+# is the repo cloned as `other-name/`, `repo-k` is a directory inside the monorepo clone.
 # Explicit args may be a checkout path OR a bare mirror name.
 # Only mirrors that are actually STALE are selected — i.e. the repo-side
 # graphify-out/graph.json exists AND differs byte-for-byte from the mirrored
@@ -121,7 +121,7 @@ HEAD_SHA_AT_START="$(git -C "$VAULT" rev-parse HEAD 2>/dev/null || true)"
 # Neither half holds:
 #
 #   mirror-x   is the repo <org>/other-name, cloned as `other-name/` — name ≠ folder
-#   repo-a     is monorepo/android/applications/repo-a          — not a direct child
+#   repo-k     is monorepo/android/applications/repo-k          — not a direct child
 #   mono-*     are monorepo/frontend, monorepo/services/core, … — both at once
 #
 # A real vault's `mirror-x` mirror was unsyncable for exactly this reason:
@@ -176,8 +176,8 @@ repo_path_for() { # mirror_name
 # lowercase forward-slash with no trailing slash before comparing.
 #
 # String comparison alone is not enough. repos.local.json stores NATIVE paths
-# (`C:\Users\...\hub\frontend`) while the same directory reaches this script as
-# `/c/Users/.../hub/frontend` under Git Bash — different strings, one directory.
+# (`C:\Users\...\monorepo\frontend`) while the same directory reaches this script as
+# `/c/Users/.../monorepo/frontend` under Git Bash — different strings, one directory.
 # So when a path exists, canonicalize it by actually entering it and asking the
 # shell where it is; that renders both forms in the shell's own vocabulary. The
 # string fold is kept as the fallback for paths that no longer exist.
@@ -397,7 +397,7 @@ mirror_is_stale() {
 }
 
 # Explicit arguments may be a checkout PATH (as always) or, now that the alias
-# map is loaded, a bare MIRROR NAME — `sync-graph.sh hub-frontend`. The name form
+# map is loaded, a bare MIRROR NAME — `sync-graph.sh mono-frontend`. The name form
 # is unambiguous and is how anyone who has read the scope table will reach for
 # it; a path that happens to equal an alias name would have to be a bare
 # relative dir in $PWD, so the name wins only when no such directory exists.
@@ -418,7 +418,7 @@ if [[ ${#repos[@]} -eq 0 ]]; then
     # Resolve through the alias map, so a mirror whose checkout is not
     # $REPOS_DIR/<name> is still found. Staleness must be judged on the RESOLVED
     # path — comparing against a path that cannot exist always reads "not stale",
-    # which is how store-hub went quietly unsynced.
+    # which is how one renamed mirror went quietly unsynced.
     src_repo="$(repo_path_for "$n")"
     if [[ $SYNC_ALL -eq 1 ]] || mirror_is_stale "$src_repo/graphify-out/graph.json" "$VAULT/graphify/$n/graph.json"; then
       repos+=("$src_repo")
@@ -436,8 +436,8 @@ synced=()
 refused=()
 for repo in "${repos[@]}"; do
   # The mirror this checkout publishes to. basename is right whenever the folder
-  # name IS the canonical name; the alias map is what makes hub/frontend publish
-  # to hub-frontend rather than to a bare, collision-prone `frontend`.
+  # name IS the canonical name; the alias map is what makes monorepo/frontend publish
+  # to mono-frontend rather than to a bare, collision-prone `frontend`.
   name="$(mirror_name_for "$repo")"
   src="$repo/graphify-out"
   dst="$VAULT/graphify/$name"

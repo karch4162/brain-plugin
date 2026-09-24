@@ -488,8 +488,8 @@ function transformReport(m, finalLabels, preservedIds, keepLinkNames = new Set()
   // pointing at the placeholder target. build-community-notes.mjs then dutifully
   // manufactures a generic link-only stub for each dangling target — so the
   // command that exists to CLEAR "all-generic community labels" reports success
-  // while re-creating it. Measured residue 2026-08-04: hub-dw-service 3,
-  // hub-gateway 11, hub-core-service 43, hub-frontend 68 (68 of 158 communities
+  // while re-creating it. Measured residue 2026-08-04: mono-dw-service 3,
+  // mono-gateway 11, mono-core-service 43, mono-frontend 68 (68 of 158 communities
   // — the majority of that report's links) = 125 total.
   //
   // The headings are the authority on each id's final name, and by now they are

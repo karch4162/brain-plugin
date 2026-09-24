@@ -8,7 +8,7 @@
 // parent. Two things break that:
 //
 //   1. Repos that live at a SUB-PATH of a checkout. Five of one real vault's
-//      nine covered "repos" (repo-a, repo-b, repo-c, repo-d, repo-e) are all
+//      nine covered "repos" (repo-k, repo-l, repo-m, repo-n, repo-o) are all
 //      inside a single `monorepo` clone. No value of REPOS_DIR resolves those
 //      AND the standalone repos at the same time.
 //   2. Engineers laying out checkouts differently — `monorepo` vs `monorepo-4`,
@@ -180,7 +180,7 @@ export function resolveRepos(vault, searchRoots = []) {
  * prompt must allow for both:
  *
  *   - **sub-path repo** — the mirror is a directory inside a larger checkout.
- *     Nothing on disk says the mirror "repo-a" means `android/applications/repo-a`
+ *     Nothing on disk says the mirror "repo-k" means `android/applications/repo-k`
  *     inside the monorepo clone.
  *   - **renamed repo** — the mirror name matches neither the folder nor the
  *     remote. A vault's `mirror-x` mirror can be the repo `<org>/other-name`,

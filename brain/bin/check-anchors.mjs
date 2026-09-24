@@ -4,7 +4,7 @@
 // The /brain:promote gate. Promotion turns a draft into a trusted note, and the
 // whole claim to trust is the `source:` anchor: the file, PR or commit that makes
 // the fact true. On 2026-08-04 nine notes were promoted to trusted with
-// `source: hub/docs/…` anchors that could not resolve on the promoting machine.
+// `source: repo-b/docs/…` anchors that could not resolve on the promoting machine.
 // Nothing stopped it, because "verify the anchor resolves" was PROSE in a skill
 // file — and prose drifts. This script is the mechanical form of that rule.
 //
