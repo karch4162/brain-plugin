@@ -393,6 +393,41 @@ run_check
 assert_eq "colon-mixed-multi/exit-2" "2" "$STATUS" "$(evidence)"
 assert_out_has "colon-mixed-multi/counts" "1 verified, 0 broken, 1 unverifiable, 0 note(s) with no source:" "$(evidence)"
 
+# --- 12. a git-IGNORED anchor is not verified (INNOV-304 / AIP-301) --------
+# wiki-ingest writes `source: chats/<repo>/<digest>.md`, and `chats/` is in the
+# vault's .gitignore: the file exists only on the machine that ran the harvest.
+# "exists on my disk" must never read as "verified" — it is a false green for
+# every teammate who pulls the vault.
+echo "--- 12. git-ignored vault-local anchor ---"
+sb_new
+git init --quiet -b main "$VAULT"
+git -C "$VAULT" config user.email "anchors-test@example.invalid"
+git -C "$VAULT" config user.name "Anchors Test"
+git -C "$VAULT" config commit.gpgsign false
+git -C "$VAULT" config core.autocrlf false
+printf 'chats/\n' >"$VAULT/.gitignore"
+mkdir -p "$VAULT/chats/demo" "$VAULT/notes"
+printf 'digest\n' >"$VAULT/chats/demo/d1.md"
+printf 'tracked\n' >"$VAULT/notes/tracked.md"
+git -C "$VAULT" add .gitignore notes/tracked.md
+git -C "$VAULT" commit --quiet -m "seed"
+mknote from-chat "chats/demo/d1.md"
+run_check
+assert_eq "gitignored/exit-2" "2" "$STATUS" "$(evidence)"
+assert_out_has "gitignored/counts" "0 verified, 0 broken, 1 unverifiable" "$(evidence)"
+assert_out_has "gitignored/names-the-note" "wiki/_drafts/from-chat.md" "$(evidence)"
+assert_out_has "gitignored/says-why" "git-ignored" "$(evidence)"
+assert_out_lacks "gitignored/never-called-rot" "BROKEN" "$(evidence)"
+assert_out_lacks "gitignored/no-clone-advice" "repo(s) needed" "$(evidence)"
+
+# Positive control: a TRACKED vault-local file still verifies, so the guard is
+# "ignored by git", not "vault-local".
+rm -f "$VAULT/wiki/_drafts/from-chat.md"
+mknote from-tracked "notes/tracked.md"
+run_check
+assert_eq "tracked-vault-local/exit-0" "0" "$STATUS" "$(evidence)"
+assert_out_has "tracked-vault-local/counts" "1 verified, 0 broken, 0 unverifiable" "$(evidence)"
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"

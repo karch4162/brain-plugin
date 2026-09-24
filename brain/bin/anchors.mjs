@@ -24,7 +24,8 @@
 //                  This is rot: the note points at something that moved.
 //   unresolvable — we could not check, either way. No local checkout, an
 //                  unrecognized repo prefix, a pinned rev this clone never
-//                  fetched, or an off-machine anchor (a PR/URL). Absence of a
+//                  fetched, an off-machine anchor (a PR/URL), or a vault-local
+//                  file git ignores (it exists only here). Absence of a
 //                  local checkout is evidence of NOTHING; reporting it as rot
 //                  makes an engineer re-anchor notes that were already correct.
 //
@@ -61,6 +62,21 @@ export function gitHas(root, rev, path) {
   };
   if (!run(['cat-file', '-e', `${rev}^{commit}`])) return null; // rev unknown locally
   return run(['cat-file', '-e', `${rev}:${path}`]);
+}
+
+/**
+ * Is `path` (relative to `root`) ignored by git there?
+ *   true  — ignored: it exists only on the machine that wrote it
+ *   false — not ignored (tracked files are never reported ignored)
+ *   null  — cannot tell (not a repo, git unavailable)
+ */
+export function gitIgnores(root, path) {
+  try {
+    execFileSync('git', ['-C', root, 'check-ignore', '-q', '--', path], { stdio: 'ignore', timeout: 10000 });
+    return true;
+  } catch (e) {
+    return e.status === 1 ? false : null;
+  }
 }
 
 /**
@@ -158,7 +174,7 @@ export function buildAnchorContext(vault) {
  *             off it for the wrong-repo cross-check).
  * @returns array of { state, from, source, repo?, reason?, looked?, area?, resolved? }
  *          states: verified | broken | unresolvable | mismatch | untracked
- *          reasons (unresolvable only): no-checkout | unknown | rev | external
+ *          reasons (unresolvable only): no-checkout | unknown | rev | external | gitignored
  *
  * A note with no `source:` at all yields []. Callers decide what that means —
  * freshness ignores it, promote reports it.
@@ -211,6 +227,7 @@ export function classifyAnchors(ctx, note) {
     if (!src.includes('/')) continue;
 
     let resolved = null;
+    let vaultLocal = false;
     const firstSeg = src.split('/')[0];
 
     // Cross-check the note's wiki area against the repo the anchor resolves
@@ -242,6 +259,7 @@ export function classifyAnchors(ctx, note) {
       continue;
     } else if (existsSync(join(ctx.vault, src))) {
       resolved = join(ctx.vault, src);
+      vaultLocal = true;
     } else {
       // try each covered repo as the implicit root
       for (const repo of ctx.covered) {
@@ -275,6 +293,13 @@ export function classifyAnchors(ctx, note) {
       continue;
     }
 
+    // A vault-local file git ignores (wiki-ingest's `chats/<repo>/<digest>.md`)
+    // exists only on the machine that wrote it — for every teammate who pulls
+    // the vault it is a dead path. "On my disk" is not "verified" (INNOV-304).
+    if (vaultLocal && gitIgnores(ctx.vault, src)) {
+      out.push({ state: 'unresolvable', from: rel, source: src, repo: null, reason: 'gitignored' });
+      continue;
+    }
     if (existsSync(resolved)) out.push({ state: 'verified', from: rel, source: src, repo: firstSeg, resolved });
     else out.push({ state: 'broken', from: rel, source: src, repo: firstSeg, looked: resolved });
   }
