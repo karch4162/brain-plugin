@@ -429,6 +429,20 @@ assert_eq "pin/banner-index-untouched" "0" "$(staged_count)" "$(evidence)"
 assert_contains "pin/banner-explains" "BRANCH:SHA" "$(out_all)" "$(evidence)"
 assert_not_contains "pin/banner-not-head-moved" "HEAD moved" "$(out_all)" "$(evidence)"
 
+# --- 18c. an explicitly EMPTY --pin refuses; it is never "unpinned" ----------
+# save extracts the pin with `--print-pin | sed`; if --print-pin refuses, the sed
+# still succeeds and yields "". That must fail closed, not commit unguarded.
+sb_new "brain/work"
+GH_PATH="$GH_NONE"
+make_dirty
+before="$(head_sha)"
+run_guard -m "empty pin" --pin ""
+assert_eq "pin/empty-refused" "1" "$STATUS" "$(evidence)"
+assert_eq "pin/empty-head-unmoved" "$before" "$(head_sha)" "$(evidence)"
+assert_contains "pin/empty-explains" "BRANCH:SHA" "$(out_all)" "$(evidence)"
+run_guard -m "empty pin" --pin=
+assert_eq "pin/empty-eq-form-refused" "1" "$STATUS" "$(evidence)"
+
 echo "--- E. the allowlist: staging AND index verification ---"
 
 # --- 19. only allowlisted paths are staged --------------------------------

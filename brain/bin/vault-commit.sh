@@ -122,7 +122,7 @@ BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$BIN_DIR/lib/branch.sh"
 
 MESSAGE=""
-PIN=""
+unset PIN   # unset = no --pin; set-but-empty (--pin "") is malformed, never "unpinned"
 FORCE_COMMIT=0
 PRINT_ALLOWLIST=0
 PRINT_REQUIRED=0
@@ -284,7 +284,7 @@ CUR_SHA="$(git -C "$VAULT" rev-parse HEAD 2>/dev/null || true)"
 # HEAD PIN. Format BRANCH:SHA, as the caller saw it before it started working.
 # A malformed pin is a REFUSAL, not an ignored argument — a caller that meant to
 # pin and typo'd the format must not silently get an unpinned commit.
-if [[ -n "$PIN" ]]; then
+if [[ -n "${PIN+set}" ]]; then
   pin_branch="${PIN%%:*}"
   pin_sha="${PIN#*:}"
   # Whitespace can't appear in a ref or a sha, so it means the caller passed more
