@@ -39,7 +39,7 @@
 #
 # --fix ONLY APPENDS. It never overwrites, never reorders, never removes, and
 # never rewrites from the template. A vault's allowlist is a customized
-# governance file — tray-brain carries `wiki/_drafts/`, which a template
+# governance file — a team vault may carry `wiki/_drafts/`, which a template
 # overwrite would silently drop. Appending is the only safe edit, and each
 # appended entry is commented with which command needs it, so the next reader
 # knows why it is there.

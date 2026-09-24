@@ -25,8 +25,8 @@
 # resolved to a checkout via the vault's repos.json/repos.local.json alias map,
 # falling back to $REPOS_DIR/<name> (default: the vault's parent dir) when the
 # vault has no map or the name is not in it. The alias map is what lets a mirror
-# live somewhere other than a same-named directory one level down — `store-hub`
-# is the repo cloned as `edge/`, `KDS` is a directory inside the monorepo clone.
+# live somewhere other than a same-named directory one level down — `mirror-x`
+# is the repo cloned as `other-name/`, `repo-a` is a directory inside the monorepo clone.
 # Explicit args may be a checkout path OR a bare mirror name.
 # Only mirrors that are actually STALE are selected — i.e. the repo-side
 # graphify-out/graph.json exists AND differs byte-for-byte from the mirrored
@@ -120,12 +120,12 @@ HEAD_SHA_AT_START="$(git -C "$VAULT" rev-parse HEAD 2>/dev/null || true)"
 # directly under one shared parent, with a folder name equal to its mirror name.
 # Neither half holds:
 #
-#   store-hub  is the repo vendsy/edge, cloned as `edge/`      — name ≠ folder
-#   KDS        is monorepo/android/applications/KDS            — not a direct child
-#   hub-*      are hub/frontend, hub/services/core-service, …  — both at once
+#   mirror-x   is the repo <org>/other-name, cloned as `other-name/` — name ≠ folder
+#   repo-a     is monorepo/android/applications/repo-a          — not a direct child
+#   mono-*     are monorepo/frontend, monorepo/services/core, … — both at once
 #
-# tray-brain's `store-hub` mirror has been unsyncable for exactly this reason:
-# the mirror exists, `$REPOS_DIR/store-hub` does not, so the flat lookup finds
+# A real vault's `mirror-x` mirror was unsyncable for exactly this reason:
+# the mirror exists, `$REPOS_DIR/mirror-x` does not, so the flat lookup finds
 # no source graph and silently skips it. A mirror that can never sync looks
 # identical to a mirror nobody rebuilt.
 #
@@ -409,7 +409,7 @@ done
 if [[ ${#repos[@]} -eq 0 ]]; then
   # DEFAULT SCOPE: never "every mirror". Only mirrors whose source graph actually
   # differs from the mirrored copy — an unscoped run must not touch a repo nobody
-  # rebuilt (that is how tray_pos_flutter got degraded to generic labels).
+  # rebuilt (that is how repo-a got degraded to generic labels).
   # --all (INNOV-269) is the explicit opt-in back to "every mirror".
   selected=()
   for d in "$VAULT"/graphify/*/; do
@@ -503,7 +503,7 @@ for repo in "${repos[@]}"; do
   # can emit a handful of named headings alongside hundreds of "Community N"
   # placeholders, and copying that over a fully named report destroys the
   # vault-side labels and breaks every Code: [[_COMMUNITY_*]] link built on them
-  # (the documented tray_pos_flutter incident). So we copy only when the incoming
+  # (the documented repo-a incident). So we copy only when the incoming
   # report names at least as many communities as the existing one — an equal count
   # (a same-count relabel or plain content refresh) still copies. graph.json syncs
   # below either way; stubs regenerate from the preserved report + new graph
@@ -555,7 +555,7 @@ for repo in "${repos[@]}"; do
       #         correctly goes quiet while still refusing the copy), so the full
       #         INNOV-288 escalation and the INNOV-262 finding both stand.
       # NEITHER ARM WEAKENS THE REFUSAL. The incoming report never overwrites the
-      # vault's on either path (the tray_pos_flutter label-loss incident), and
+      # vault's on either path (the repo-a label-loss incident), and
       # graph.json/manifest.json mirror on both, exactly as before.
       #
       # `unknown` staleness lands in the quiet arm AND SAYS SO. Per the scope

@@ -43,7 +43,7 @@
 #
 # Usage:
 #   bash check-plugin-version.sh                   # check the brain plugin
-#   bash check-plugin-version.sh --plugin <key>    # e.g. tray-brain@tray-brain-marketplace
+#   bash check-plugin-version.sh --plugin <key>    # e.g. brain@brain-marketplace
 #   bash check-plugin-version.sh --expect 0.2.22   # compare against an explicit version
 #
 # Contract (the /brain:doctor skill and its tests depend on exactly this):

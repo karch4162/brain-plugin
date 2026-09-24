@@ -1,7 +1,6 @@
 # brain-plugin
 
 > **Status:** extracted + cold-install-validated (POC §17.2 steps 2–3). **§17.1 checkbox 1 (packaging/isolation) MET** — `/brain:freshness` ran end-to-end through a live `--plugin-dir` install (slash command → skill → bundled `bin/` script → report). Remaining gate: §10 eval on a real  repo (checkbox 2 = the go/no-go for teams).
-> **Folder/repo name is provisional** — confirm before the first push to vendsy git.
 
 Development repo for the standalone, agent-agnostic **brain plugin** (POC §16): the knowledge
 *substrate* — the 3-step graph→wiki→raw query rule, the `/save` `/resume` `/freshness` `/wiki-ingest`
@@ -149,4 +148,4 @@ delegated/external: **B3** graphify skill, **B4** graphify CLI. **B5** `BRAIN_RO
 | 6 | **Global-hook isolation gotcha (§17.2)** | ✅ resolved by design — hook is plugin-shipped, no global `settings.json` mutation |
 | 7 | **Track B handshake** | ✅ simplified — consumer does graphify-detection first, `BRAIN_ROOT` second, its own memory as fallback; this plugin emits both signals |
 
-Remaining before vendsy push: a live plugin install to close item #1, and the expensive full graph-content regen (explicitly **not** a diff target — content is user-owned, §17.2).
+Remaining before the team rollout: a live plugin install to close item #1, and the expensive full graph-content regen (explicitly **not** a diff target — content is user-owned, §17.2).

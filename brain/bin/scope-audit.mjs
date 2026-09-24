@@ -22,13 +22,13 @@
 //
 //   (a) OUT-OF-SCOPE — nodes built from files the standard says are OUT:
 //       build/config manifests, test scaffolding, deps, generated output.
-//       Measured on vendsy/hub 2026-07-30: hub-frontend 159/2034 nodes (8%),
-//       hub-packages 154/267 (58%), with community labels like "Contracts Jest
+//       Measured on one real monorepo 2026-07-30: its frontend mirror 159/2034
+//       nodes (8%), its packages mirror 154/267 (58%), with labels like "Contracts Jest
 //       Config" and "Base ESLint Config" — architecture names for build tooling.
 //       Junk nodes are OBVIOUS: a human reading that report knows something is off.
 //
 //   (b) MISSING-ROOTS — a source-bearing top-level directory with ZERO nodes.
-//       MISSING CODE IS INVISIBLE. vendsy/hub's frontend keeps real application
+//       MISSING CODE IS INVISIBLE. That monorepo's frontend keeps real application
 //       code in constants/ hooks/ services/ types/ validation/ providers/, none
 //       of which the recorded Next.js row covered. A query for "what calls this
 //       service" then returns nothing and LOOKS LIKE A CORRECT ANSWER.
@@ -40,13 +40,13 @@
 //   Both are still reported, and both exit 1.
 //
 // PROVENANCE: the (a) matcher is PORTED from the one-off scope-audit.mjs used in
-// the tray-brain vault, which across all 9 non-hub mirrors produced exactly ONE
+// a real team vault, which across all 9 non-monorepo mirrors produced exactly ONE
 // stray (device-stats-gateway/jest.config.js). Its false-positive rate is
 // therefore known-low, which is why it was ported rather than rewritten. Two
 // classes the ticket requires were genuinely absent from it and are ADDED here:
 // `vitest.config.*` (the original's `jest[.-]` and `\.(test|spec)\.` match
 // neither) and the generic `*.config.{js,ts,mjs,cjs}` manifest class. The
-// original's hardcoded `hub-packages` debug branch is now the `--prefixes` flag,
+// original's hardcoded single-mirror debug branch is now the `--prefixes` flag,
 // and its vault-relative `graphify/<r>/graph.json` path is now `--graph`/`--mirror`.
 //
 // A NOTE ON `packages/`: it is deliberately NOT in the denylist even though
