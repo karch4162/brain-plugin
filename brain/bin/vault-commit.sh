@@ -287,9 +287,13 @@ CUR_SHA="$(git -C "$VAULT" rev-parse HEAD 2>/dev/null || true)"
 if [[ -n "$PIN" ]]; then
   pin_branch="${PIN%%:*}"
   pin_sha="${PIN#*:}"
-  if [[ "$PIN" != *:* || -z "$pin_branch" || -z "$pin_sha" ]]; then
+  # Whitespace can't appear in a ref or a sha, so it means the caller passed more
+  # than the pin — e.g. session.sh --print-pin's whole banner (INNOV-315), whose
+  # colons slip past *:* and would otherwise be misreported as a moved HEAD.
+  if [[ "$PIN" != *:* || -z "$pin_branch" || -z "$pin_sha" || "$PIN" == *[[:space:]]* ]]; then
     refuse "--pin '$PIN' is not in BRANCH:SHA form" \
-      "  A pin that cannot be parsed is treated as a failure, never as 'unpinned'."
+      "  A pin that cannot be parsed is treated as a failure, never as 'unpinned'." \
+      "  From session.sh --print-pin, pass only the value of its '  pin:' line."
   fi
   if [[ "$pin_branch" != "$CUR_BRANCH" || "$pin_sha" != "$CUR_SHA" ]]; then
     refuse "the vault's HEAD moved while this command was running" \

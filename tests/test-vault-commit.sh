@@ -95,6 +95,12 @@ assert_contains() { # name needle haystack [evidence...]
     fail "$name" "expected to contain: [$needle]" "actual:              [$hay]" "$@"
   fi
 }
+assert_not_contains() { # name needle haystack [evidence...]
+  local name="$1" needle="$2" hay="$3"
+  shift 3
+  if [[ "$hay" != *"$needle"* ]]; then pass "$name"
+  else fail "$name" "expected NOT to contain: [$needle]" "actual:                  [$hay]" "$@"; fi
+}
 
 # First line of a file, with any trailing CR stripped (Git Bash / CRLF safety).
 first_line() { head -n 1 "$1" 2>/dev/null | tr -d '\r'; }
@@ -406,6 +412,22 @@ run_guard -m "typo" --pin "not-a-valid-pin"
 assert_eq "pin/malformed-refused" "1" "$STATUS" "$(evidence)"
 assert_eq "pin/malformed-head-unmoved" "$before" "$(head_sha)" "$(evidence)"
 assert_contains "pin/malformed-explains" "BRANCH:SHA" "$(out_all)" "$(evidence)"
+
+# --- 18b. session.sh --print-pin's whole banner is malformed, not "HEAD moved" --
+# INNOV-315: save passed --print-pin's stdout through unchanged. The banner has
+# colons, so it passed the *:* check, split into branch "SESSION" and a sha of
+# prose, and was reported as the moved-HEAD refusal — for a HEAD that never moved.
+sb_new "brain/work"
+GH_PATH="$GH_NONE"
+make_dirty
+before="$(head_sha)"
+banner="$(printf 'SESSION: OK - pin for session s1 as recorded\n  pin: brain/work:%s' "$before")"
+run_guard -m "banner" --pin "$banner"
+assert_eq "pin/banner-refused" "1" "$STATUS" "$(evidence)"
+assert_eq "pin/banner-head-unmoved" "$before" "$(head_sha)" "$(evidence)"
+assert_eq "pin/banner-index-untouched" "0" "$(staged_count)" "$(evidence)"
+assert_contains "pin/banner-explains" "BRANCH:SHA" "$(out_all)" "$(evidence)"
+assert_not_contains "pin/banner-not-head-moved" "HEAD moved" "$(out_all)" "$(evidence)"
 
 echo "--- E. the allowlist: staging AND index verification ---"
 
