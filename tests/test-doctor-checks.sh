@@ -354,6 +354,15 @@ claims=$(grep -liE 'appl(y|ies) its (governance|policy)' \
   "$REPO_ROOT/brain/skills/init/SKILL.md" "$REPO_ROOT/brain/templates/brain-registry.example.json")
 assert_eq "antidrift/governance-not-claimed-as-enforced" "" "$claims" \
   "the governance profile is recorded, not enforced; these files claim it is applied"
+# A regex cannot tell a claim from a denial, so also require the denial itself:
+# a rewrite that drops it fails here even if it dodges the pattern above.
+for f in brain/skills/init/SKILL.md brain/templates/brain-registry.example.json; do
+  if grep -qi 'Nothing reads or enforces it yet' "$REPO_ROOT/$f"; then
+    pass "antidrift/governance-disclaimer-present:$f"
+  else
+    fail "antidrift/governance-disclaimer-present:$f" "missing 'Nothing reads or enforces it yet'"
+  fi
+done
 
 # --- 19. the shipped template satisfies its own check -------------------
 # A fresh vault must be born passing. If the template and the required set
