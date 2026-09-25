@@ -42,7 +42,7 @@
 # never an error; (b) stays checkable locally and exactly, as a hard drift.
 #
 # Usage:
-#   bash check-plugin-version.sh                   # check the brain plugin
+#   bash check-plugin-version.sh                   # check THIS plugin (key derived, INNOV-318)
 #   bash check-plugin-version.sh --plugin <key>    # e.g. brain@brain-marketplace
 #   bash check-plugin-version.sh --expect 0.2.22   # compare against an explicit version
 #
@@ -63,7 +63,7 @@
 # but visibly, because a false ✅ here is what cost this workstream two tickets.
 set -uo pipefail
 
-PLUGIN_KEY="brain@brain-marketplace"
+PLUGIN_KEY=""
 EXPECT=""
 
 while [[ $# -gt 0 ]]; do
@@ -76,12 +76,43 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-PLUGIN_NAME="${PLUGIN_KEY%@*}"
-MARKET_NAME="${PLUGIN_KEY#*@}"
-
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 INSTALLED_JSON="$CLAUDE_DIR/plugins/installed_plugins.json"
 MARKETS_JSON="$CLAUDE_DIR/plugins/known_marketplaces.json"
+
+# THE KEY IS DERIVED, NOT HANDED IN (INNOV-318). A caller-supplied key goes
+# stale the moment the plugin is renamed (tray-brain -> brain): the old key no
+# longer exists, and a check pointed at a missing key cannot fail — the exact
+# false-green this check was built to kill. So the running copy asks itself:
+# its name comes from its OWN plugin.json, and the marketplace from the install
+# record carrying that name (the record whose installPath is this copy wins when
+# several marketplaces carry the same name). --plugin still overrides.
+# `pwd -W` gives Git Bash a Windows-native path node can resolve; elsewhere it
+# fails and plain pwd is already native.
+SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && { pwd -W 2>/dev/null || pwd; })"
+DERIVE_RC=0
+if [[ -z "$PLUGIN_KEY" ]] && command -v node >/dev/null 2>&1; then
+  PLUGIN_KEY="$(node -e '
+    const fs = require("fs"), path = require("path");
+    const norm = p => { const r = path.resolve(p).replace(/\\/g, "/").replace(/\/$/, "");
+                        return process.platform === "win32" ? r.toLowerCase() : r; };
+    let name = "";
+    try { name = JSON.parse(fs.readFileSync(path.join(process.argv[1], ".claude-plugin", "plugin.json"), "utf8")).name || ""; } catch (e) {}
+    if (!name) process.exit(3);
+    let keys = [];
+    try { keys = Object.entries(JSON.parse(fs.readFileSync(process.argv[2], "utf8")).plugins || {}); } catch (e) {}
+    const mine = keys.filter(([k]) => k.slice(0, k.lastIndexOf("@")) === name);
+    const self = norm(process.argv[1]);
+    // A name alone is only trusted when it is unique: with the same name in
+    // two marketplaces and no record for THIS copy, picking one could check an
+    // unrelated install and report OK. Exit 5 => the caller reports SKIPPED.
+    const hit = mine.find(([, recs]) => (recs || []).some(r => r.installPath && norm(r.installPath) === self))
+             || (mine.length === 1 ? mine[0] : null);
+    if (!hit && mine.length > 1) { process.stdout.write(mine.map(([k]) => k).join(", ")); process.exit(5); }
+    process.stdout.write(hit ? hit[0] : name + "@" + name + "-marketplace");
+  ' "$SELF_ROOT" "$INSTALLED_JSON" 2>/dev/null)"
+  DERIVE_RC=$?
+fi
 
 skipped() { # reason, then extra lines
   echo "PLUGIN-VERSION: SKIPPED - $1"
@@ -101,10 +132,15 @@ read_installed() {
       const j = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
       const recs = (j.plugins || {})[process.argv[2]];
       if (!Array.isArray(recs) || !recs.length) process.exit(3);
-      const r = recs[0];
+      // One record per scope. Prefer the one that IS this running copy, so a
+      // user+project pair on the same key compares the copy actually checked.
+      const path = require("path");
+      const norm = p => { const x = path.resolve(p).replace(/\\/g, "/").replace(/\/$/, "");
+                          return process.platform === "win32" ? x.toLowerCase() : x; };
+      const r = recs.find(x => x.installPath && norm(x.installPath) === norm(process.argv[3])) || recs[0];
       process.stdout.write([r.version || "", r.installPath || "", r.gitCommitSha || ""].join("\t"));
     } catch (e) { process.exit(4); }
-  ' "$INSTALLED_JSON" "$PLUGIN_KEY" 2>/dev/null
+  ' "$INSTALLED_JSON" "$PLUGIN_KEY" "$SELF_ROOT" 2>/dev/null
 }
 
 read_market_location() {
@@ -121,6 +157,12 @@ read_market_location() {
 
 # --- 0. preconditions -------------------------------------------------------
 command -v node >/dev/null 2>&1 || skipped "node is not on PATH, cannot read the plugin registries"
+# Never substitute a fixed key for a failed derivation: that is the rename
+# false-green again, reached by a different road.
+[[ $DERIVE_RC -eq 5 ]] && skipped "several installs share this plugin's name and none is this copy: $PLUGIN_KEY"   "Pass --plugin <name@marketplace> to pick one."
+[[ -n "$PLUGIN_KEY" ]] || skipped "cannot read this copy's name from '$SELF_ROOT/.claude-plugin/plugin.json'"   "Pass --plugin <name@marketplace> to check a specific install."
+PLUGIN_NAME="${PLUGIN_KEY%@*}"
+MARKET_NAME="${PLUGIN_KEY#*@}"
 [[ -f "$INSTALLED_JSON" ]] || skipped "no installed_plugins.json at '$INSTALLED_JSON'" \
   "This machine may run the plugin from source (--plugin-dir), which never goes stale."
 

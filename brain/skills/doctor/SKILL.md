@@ -37,6 +37,7 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
    - **Exit `1` (`PLUGIN-VERSION: DRIFTED`) →** ❌ → **R6**. Relay the line **verbatim** — it names both versions and the install path.
    - **Exit `1` (`PLUGIN-VERSION: STALE-CLONE`) →** ❌ → **R6**. Install matches the clone, but a successful fetch proved the clone is N commit(s) behind its remote — the trap where `claude plugin update` reports success and changes nothing. Relay verbatim. **The remedy ORDER matters:** `claude plugin marketplace update <mp>` FIRST, then `claude plugin update <key>`, then restart/reload.
    - **`PLUGIN-VERSION: SKIPPED` (exit `0`) →** ⚠️ **"skipped — <reason>", never ✅.** A machine running from source (`--plugin-dir`) legitimately skips. A false ✅ here is what this check exists to prevent.
+   - **Don't pass `--plugin`.** The script derives its own key — name from its own `plugin.json`, marketplace from the matching install record (INNOV-318). A key handed in goes stale on a rename (`tray-brain` → `brain`) and then checks a key that no longer exists.
 
    Why it matters: measured 2026-08-06, the author's own install was **0.2.19 against a 0.2.22 source** — missing `vault-commit.sh`, `write-hot.sh`, `check-hot-budget.sh`, `label-guard.mjs` and `check-anchors.mjs`. **Nine shipped fixes were not running**, and INNOV-265 was very likely filed against an already-fixed defect for exactly this reason. A stale install doesn't misbehave; it behaves like an older, worse version of itself, silently.
 8. **Vault allowlist covers the write set** — a `.saveinclude` missing a path a shipped command commits means that command does its file work and then `vault-commit.sh` refuses to commit it: the work lands on disk, the commit never happens. Every vault created before `0.2.22` has this (`graphify/` was never allowlisted, because `sync-graph.sh` used to run its own `git add`).
@@ -71,7 +72,22 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
     - Missing, unparseable, or no/invalid `tracker` → ⚠️ **informational, no scripted repair** — the next `/brain:save` drain (or `/brain:init`) asks and writes it. If this machine's registry entry still carries a legacy `tracker` field, offer to write that value into `brain.json` instead of asking fresh.
     - Skip if check 4 failed.
 
-## Repairs (ask before R1 — it reinstalls a global tool)
+12. **Shadowing install (INNOV-318)** — more than one brain-family plugin live for this project (different names are different plugins; the same name at user + project scope is two installs). Both bind the same vault: two sets of hooks, two save commands writing one `hot.md`, and whichever loads first decides which fixes run. SPO-324 was exactly this — a stale project-scoped install shadowing a current user-scoped one.
+    ```bash
+    bash "${CLAUDE_PLUGIN_ROOT}/bin/check-shadow-install.sh"   # from the project, or with CLAUDE_PROJECT_DIR set
+    ```
+    - **Exit `0` (`SHADOW-INSTALL: OK`) →** ✅, quote the line.
+    - **Exit `1` (`SHADOW-INSTALL: SHADOWED`) →** ❌ → **R9**. Relay the block **verbatim** — it names each install, its version, its scope, and the exact uninstall command.
+    - **`SHADOW-INSTALL: SKIPPED` (exit `0`) →** ⚠️ "skipped — <reason>", never ✅.
+13. **Vault command prefix (INNOV-318)** — the vault's `CLAUDE.md` naming a brain-family namespace other than the installed one (`/tray-brain:save` under a `brain` install).
+    ```bash
+    bash "${CLAUDE_PLUGIN_ROOT}/bin/check-command-prefix.sh"   # from the vault root, or with BRAIN_ROOT=<vault> set
+    ```
+    - **Exit `0` (`COMMAND-PREFIX: OK`) →** ✅.
+    - **Exit `1` (`COMMAND-PREFIX: STALE`) →** ❌ → **R10**. Relay verbatim.
+    - **`COMMAND-PREFIX: SKIPPED` (exit `0`) →** ⚠️ "skipped — <reason>", never ✅. Skip if check 4 failed.
+
+## Repairs (ask before R1 and R9 — they touch global installs)
 
 - **R1 — broken graphify launcher (the reparse-point case).** Clean-reinstall to the pinned version:
   ```bash
@@ -108,6 +124,13 @@ Resolve the vault as `$BRAIN_ROOT` (else cwd). **Pinned graphify version: `0.8.4
   ```
   **Appends only** — never overwrites, reorders, or removes, and never re-seeds from the template. A vault's `.gitignore` is customized (users add their own private patterns), and a template overwrite would silently drop them. Each appended line is commented with why the plugin needs it. Show the diff and confirm before running — this is a governance file. Afterwards commit it **deliberately**: `.gitignore` is not in the allowlist, so no brain command will ever commit it for you.
 
+- **R9 — shadowing install.** **Never run it for the user.** Show the uninstall commands check 12 printed (`claude plugin uninstall <key> --scope <scope>`; project/local scope must run from that project), recommend keeping one — normally the newest, user-scoped — and run only the ones the user confirms. Then restart the session and re-run check 12.
+- **R10 — stale command prefix in the vault's CLAUDE.md.** Rewrite it:
+  ```bash
+  BRAIN_ROOT=<vault> bash "${CLAUDE_PLUGIN_ROOT}/bin/check-command-prefix.sh" --fix
+  ```
+  Rewrites **only** stale `/<ns>:<skill>` tokens, in place — line endings and every other byte survive, and a file with nothing stale is not touched. Show the diff and confirm first. Afterwards commit it **deliberately**: `CLAUDE.md` is a governance file outside `.saveinclude`, so `vault-commit.sh` refuses it by design and no brain command will commit it for you.
+
 ## Prevention (why pinning matters)
 
 The churn is driven by graphify's own skill auto-running `uv tool install --upgrade graphifyy` whenever
@@ -132,5 +155,7 @@ Brain doctor — <vault name or path>
   vault allowlist      ❌ .saveinclude missing 1 of 7: graphify/ (bin/sync-graph.sh) → offer R7
   vault gitignore      ❌ .gitignore missing 1 of 6: .brain/ (machine-local session state) → offer R8
   findings tracker     ⚠️ brain.json has no tracker — next /brain:save asks and writes it
+  shadowing install    ❌ brain@brain-marketplace 0.2.36 (user) + tray-brain@tray-brain-marketplace 0.2.33 (project) → offer R9
+  command prefix       ❌ vault CLAUDE.md names /tray-brain: x4, installed is /brain: → offer R10
 <then apply confirmed repairs and re-check>
 ```
