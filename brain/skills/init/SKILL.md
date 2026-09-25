@@ -153,7 +153,7 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 
    Call this out as a real choice because the first build can take a few minutes on a large repo (the docs-ingest dispatches subagents). Don't auto-run it silently.
 
-8. **Verify, then confirm.** Setup isn't done until it's *checked* — run the `/brain:doctor` check table (all checks, no repairs unless something is ❌; offer the matching repair if so) so the user leaves init with a green bill of health instead of an assumption. Then print: the chosen vault (name + path), its governance profile, that `BRAIN_ROOT`/`REPOS_DIR` are wired (machine-local), the recorded graph scope, and **whether the brain was seeded just now or is still empty pending `/brain:save`**. If seeded, the vault is ready to `/brain:resume` and query; if deferred, the next step is `/brain:save`. **Do not run raw `/graphify` on the repo** — it would ask you to pick a scope, which the brain has already standardized away.
+8. **Verify, then confirm.** Setup isn't done until it's *checked* — run the `/brain:doctor` check table (all checks, no repairs unless something is ❌; offer the matching repair if so) so the user leaves init with a green bill of health instead of an assumption. Then print: the chosen vault (name + path), its recorded governance profile (label it *recorded, not enforced* — it is not part of the health check), that `BRAIN_ROOT`/`REPOS_DIR` are wired (machine-local), the recorded graph scope, and **whether the brain was seeded just now or is still empty pending `/brain:save`**. If seeded, the vault is ready to `/brain:resume` and query; if deferred, the next step is `/brain:save`. **Do not run raw `/graphify` on the repo** — it would ask you to pick a scope, which the brain has already standardized away.
 
 ## Running more than one session at once — use a git worktree
 
@@ -181,4 +181,4 @@ Why it is an upgrade and not a prerequisite: `bin/vault-commit.sh` (one guarded 
 
 - The graph-before-grep hook ships **with this plugin** (`hooks/hooks.json`) — enabling the plugin is enough; `/brain:init` does **not** edit the global `~/.claude/settings.json` (a change from the hand-assembled pilot, which installed the hook globally).
 - Reconfigurable later: re-run `/brain:init` to point a project at a different vault.
-- Selecting a vault **applies its governance profile** to that project's sync (egress policy, `.graphifyignore` defaults, access tier).
+- A vault's `governance` block (`egress`, `access`, `graphifyignore`) is **recorded** on its registry entry for future use. **Nothing reads or enforces it yet** — selecting a vault does not change that project's sync. Do not tell the user it is in effect.

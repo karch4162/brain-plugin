@@ -1,6 +1,6 @@
 {
   "//": "Brain registry (POC §16.2). Canonical location: ~/.claude/brain/registry.json.",
-  "//governance": "Each vault carries its §7 profile — selecting a vault at /brain:init applies its policy to that project's sync. egress: off|anthropic-dpa|allow; access: private|eng-only|public; graphifyignore: default|strict.",
+  "//governance": "Each vault records its §7 profile here for future use. Nothing reads or enforces it yet: selecting a vault at /brain:init does not change that project's sync. egress: off|anthropic-dpa|allow; access: private|eng-only|public; graphifyignore: default|strict.",
   "//tracker": "Not here. Where auto-filed findings drain to is committed IN the vault as <vault>/brain.json {\"tracker\": {...}}, so every machine that pulls the vault agrees. A legacy per-vault tracker field in this file is ignored.",
   "vaults": [
     {
