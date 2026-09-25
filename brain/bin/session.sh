@@ -31,7 +31,7 @@
 #   BRAIN_ROOT=<vault> bash session.sh --start <command-name>  # register + branch policy
 #   BRAIN_ROOT=<vault> bash session.sh --status                # report, mutate nothing
 #   BRAIN_ROOT=<vault> bash session.sh --end                   # deregister THIS session
-#   BRAIN_ROOT=<vault> bash session.sh --print-pin             # BRANCH:SHA for vault-commit.sh
+#   BRAIN_ROOT=<vault> bash session.sh --print-pin             # banner; its "  pin:" line is BRANCH:SHA for vault-commit.sh
 #   BRAIN_ROOT=<vault> bash session.sh --repin <old> <new>     # check-freshness.sh ONLY, see below
 #
 # Contract (callers and tests depend on exactly this):
