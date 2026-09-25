@@ -15,7 +15,7 @@
 //
 // Two greps and one regex encoding the same concept is a drift factory — and the
 // failure mode is silent destruction of human labeling work (the documented
-// tray_pos_flutter incident: an existence check let a 30-named/410-generic
+// repo-a incident: an existence check let a 30-named/410-generic
 // rebuild clobber a fully-named 440-community mirror). This module owns the two
 // concepts both callers need, so there is exactly one definition of each:
 //

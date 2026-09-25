@@ -24,7 +24,9 @@
 #   first line of output starts with `HOT-WRITE: OK`      (stdout)
 #                                 or `HOT-WRITE: REFUSED` (stderr)
 #   vault resolved from $BRAIN_ROOT -> $CLAUDE_PROJECT_DIR -> $PWD
-#   the pin lives at <vault>/.brain/hot.pin (machine-local, gitignored)
+#   the pin lives at <vault>/.brain/hot.pin (machine-local, gitignored), or at
+#   .brain/hot-<id>.pin when BRAIN_SESSION_ID / CLAUDE_CODE_SESSION_ID /
+#   GROK_SESSION_ID names the session
 #
 # The refusals, all fail-closed:
 #   hot.md changed since --pin  — the whole point
@@ -136,10 +138,17 @@ pin_file() { echo "$VAULT/.brain/hot.pin"; }
 STATUS=""
 # Runs the guard, capturing streams into $BOX/out.txt / $BOX/err.txt and the exit
 # code into $STATUS.
+#
+# The session ids are unset so the guard sees the SAME environment on every
+# machine. Inheriting them made this suite green in CI (no id) and red on every
+# developer box (id set) — a gate blind to the environment it protects
+# (INNOV-310). Section E sets one deliberately, via SESSION_ENV="VAR=value".
+SESSION_ENV=""
 run_guard() { # [args...]
   (
     cd "$VAULT" 2>/dev/null || cd "$BOX" || exit 127
-    unset CLAUDE_PROJECT_DIR
+    unset CLAUDE_PROJECT_DIR BRAIN_SESSION_ID CLAUDE_CODE_SESSION_ID GROK_SESSION_ID
+    [[ -n "$SESSION_ENV" ]] && export "$SESSION_ENV"
     BRAIN_ROOT="$VAULT" bash "$GUARD" "$@"
   ) >"$BOX/out.txt" 2>"$BOX/err.txt"
   STATUS=$?
@@ -342,6 +351,35 @@ run_guard --pin
 run_guard --write "$NEW"
 leftovers="$(find "$VAULT/wiki" -name '.hot.md.*' 2>/dev/null | grep -c . || true)"
 assert_eq "write/no-temp-files-left-behind" "0" "$leftovers" "$(evidence)"
+
+echo "--- E. a named session gets its own pin ---"
+
+# --- 20. each session id var moves the pin to .brain/hot-<id>.pin ---------
+# Both shapes are asserted in one run, so neither CI (no id) nor a developer box
+# (id set) can skip one: sections A-D pin the unnamed path, this pins the named.
+for var in BRAIN_SESSION_ID CLAUDE_CODE_SESSION_ID GROK_SESSION_ID; do
+  sb_new "original hot content"
+  SESSION_ENV="$var=sess-1"
+  run_guard --pin
+  assert_eq "session/$var/pin-exit-0" "0" "$STATUS" "$(evidence)"
+  if [[ -f "$VAULT/.brain/hot-sess-1.pin" && ! -e "$(pin_file)" ]]; then
+    pass "session/$var/pin-is-per-session"
+  else
+    fail "session/$var/pin-is-per-session" "expected only .brain/hot-sess-1.pin"       "found: [$(find "$VAULT/.brain" -name '*.pin' 2>/dev/null | tr '
+' ' ')]" "$(evidence)"
+  fi
+  run_guard --write "$NEW"
+  assert_eq "session/$var/write-uses-own-pin" "0" "$STATUS" "$(evidence)"
+  SESSION_ENV=""
+done
+
+# --- 21. a session id that could escape .brain/ is refused ---------------
+sb_new "original hot content"
+SESSION_ENV="BRAIN_SESSION_ID=../x"
+run_guard --pin
+SESSION_ENV=""
+assert_eq "session/invalid-id-refused" "1" "$STATUS" "$(evidence)"
+assert_eq "session/invalid-id-writes-no-pin" "0"   "$(find "$BOX" -name '*.pin' 2>/dev/null | grep -c . || true)" "$(evidence)"
 
 # ------------------------------------------------------------------ done ---
 echo

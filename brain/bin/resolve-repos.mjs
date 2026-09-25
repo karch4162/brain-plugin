@@ -7,8 +7,8 @@
 // assumes every covered repo is a directory sitting directly under one shared
 // parent. Two things break that:
 //
-//   1. Repos that live at a SUB-PATH of a checkout. Five of tray-brain's nine
-//      covered "repos" (KDS, nodejs, POS, Tray-Library, tray-server) are all
+//   1. Repos that live at a SUB-PATH of a checkout. Five of one real vault's
+//      nine covered "repos" (repo-k, repo-l, repo-m, repo-n, repo-o) are all
 //      inside a single `monorepo` clone. No value of REPOS_DIR resolves those
 //      AND the standalone repos at the same time.
 //   2. Engineers laying out checkouts differently — `monorepo` vs `monorepo-4`,
@@ -37,9 +37,9 @@ import { execFileSync } from 'node:child_process';
 
 /**
  * Canonicalize a git remote to `host/owner/name`, so these all compare equal:
- *   https://github.com/vendsy/monorepo.git
- *   git@github.com:vendsy/monorepo.git
- *   ssh://git@github.com/vendsy/monorepo
+ *   https://github.com/<org>/monorepo.git
+ *   git@github.com:<org>/monorepo.git
+ *   ssh://git@github.com/<org>/monorepo
  * Nested GitLab groups (a/b/c) are preserved — they are part of the identity.
  */
 export function normalizeRemote(url) {
@@ -180,11 +180,11 @@ export function resolveRepos(vault, searchRoots = []) {
  * prompt must allow for both:
  *
  *   - **sub-path repo** — the mirror is a directory inside a larger checkout.
- *     Nothing on disk says the mirror "KDS" means `android/applications/KDS`
+ *     Nothing on disk says the mirror "repo-k" means `android/applications/repo-k`
  *     inside the monorepo clone.
  *   - **renamed repo** — the mirror name matches neither the folder nor the
- *     remote. tray-brain's `store-hub` mirror is the repo `vendsy/edge`, cloned
- *     as `edge/`. Guessing here would be worse than asking.
+ *     remote. A vault's `mirror-x` mirror can be the repo `<org>/other-name`,
+ *     cloned as `other-name/`. Guessing here would be worse than asking.
  *
  * `candidates` lists the discovered checkouts that matched nothing, which is
  * almost always where the answer is.

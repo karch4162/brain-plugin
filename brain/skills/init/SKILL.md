@@ -30,9 +30,9 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
       "governance": { "egress": "off", "access": "private", "graphifyignore": "default" }
     },
     {
-      "name": "tray-brain",
-      "remote": "git@github.com:vendsy/tray-brain.git",
-      "path": "/c/Users/me/Projects/tray-brain",
+      "name": "team-brain",
+      "remote": "git@github.com:<org>/team-brain.git",
+      "path": "/c/Users/me/Projects/team-brain",
       "governance": { "egress": "off", "access": "eng-only", "graphifyignore": "strict" }
     }
   ]
@@ -70,11 +70,11 @@ A user/org-level list of known vaults at **`~/.claude/brain/registry.json`** (cr
 2. **Load the registry** (`~/.claude/brain/registry.json`). If it doesn't exist, create it from the template with an empty `vaults: []`.
 
 3. **Determine the default target and check for mismatch.** Read this project's git remote (`git remote get-url origin`). Infer a sensible default:
-   - org/work remote (e.g. `vendsy/…`) → the team vault (`tray-brain`);
+   - org/work remote (e.g. `<org>/…`) → the team vault (`team-brain`);
    - personal remote or none → the personal vault.
    Hold this as a *suggestion*, not an auto-apply.
 
-4. **Select the vault — explicitly, via `AskUserQuestion`.** Present the registry vaults plus "register a new vault". Put the inferred default first, labeled `(suggested)`. **If the user's pick disagrees with the git-remote inference, surface the mismatch and re-confirm** ("This repo's remote is `vendsy/…` but you picked the personal vault — proprietary code would sync into a personal brain. Continue?"). This warning is the whole point of the step.
+4. **Select the vault — explicitly, via `AskUserQuestion`.** Present the registry vaults plus "register a new vault". Put the inferred default first, labeled `(suggested)`. **If the user's pick disagrees with the git-remote inference, surface the mismatch and re-confirm** ("This repo's remote is `<org>/…` but you picked the personal vault — proprietary code would sync into a personal brain. Continue?"). This warning is the whole point of the step.
 
 5. **If registering a vault** (the "register a new vault" choice): ask for a name, a path, and (optional) a remote. Then **branch on whether that path is already a populated vault — do NOT scaffold over existing content.**
 

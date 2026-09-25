@@ -126,6 +126,28 @@ else
     "actual: [$(grep -F 'Dead' "$BOX/out.txt")]"
 fi
 
+# --- 5. a git-ignored vault-local anchor is listed as unverifiable ----------
+# (INNOV-304) `chats/` digests are gitignored: the anchor resolves only on the
+# harvesting machine, so it must surface in the report, never pass as verified.
+BOX="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+VAULT="$BOX/vault"
+mkdir -p "$VAULT/wiki" "$VAULT/chats/demo"
+git init --quiet "$VAULT"
+printf 'chats/\n' >"$VAULT/.gitignore"
+printf 'digest\n' >"$VAULT/chats/demo/d1.md"
+printf -- '---\nid: from-chat\nsource: chats/demo/d1.md\ntags: [x]\n---\n# From chat\n' >"$VAULT/wiki/from-chat.md"
+(
+  cd "$BOX" || exit 99
+  BRAIN_ROOT="$VAULT" node "$FRESH" --stdout
+) >"$BOX/out.txt" 2>"$BOX/err.txt"
+if grep -qF 'Git-ignored vault file (1)' "$BOX/out.txt" && grep -qF 'chats/demo/d1.md' "$BOX/out.txt"; then
+  pass "gitignored-anchor/reported"
+else
+  fail "gitignored-anchor/reported" \
+    "expected a 'Git-ignored vault file (1)' bucket naming chats/demo/d1.md" \
+    "report: [$(grep -iF -A3 'Unverifiable' "$BOX/out.txt")]" "stderr: [$(cat "$BOX/err.txt")]"
+fi
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"

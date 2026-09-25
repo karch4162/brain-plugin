@@ -8,7 +8,7 @@
 // all, which is strictly worse: no community stubs, nothing queryable). The old
 // remediation — relabel in the repo, then resync the mirror — required every
 // covered repo checked out AND was destructive: a keyless resync replaces named
-// stubs with placeholders (the documented tray_pos_flutter incident).
+// stubs with placeholders (the documented repo-a incident).
 //
 // Naming a community is a pure function of mirror data: the node labels and
 // source_file paths in each cluster. No checkout needed. But the naming itself
@@ -195,7 +195,7 @@ function readReportMembers(text) {
 // cluster of that id for the heading's name to describe a cluster that exists.
 // ponytail: flat 0.5 over the <=12 members a report samples. Measured across 19
 // real mirrors: current ones score 1.0 almost everywhere, the known-stale
-// tray_pos_flutter scores below 0.5 on 418 of 433 headings — nothing sits near
+// repo-a scores below 0.5 on 418 of 433 headings — nothing sits near
 // the line. Make it a per-mirror knob only if a mirror ever lands there.
 const STALE_OVERLAP = 0.5;
 
@@ -488,8 +488,8 @@ function transformReport(m, finalLabels, preservedIds, keepLinkNames = new Set()
   // pointing at the placeholder target. build-community-notes.mjs then dutifully
   // manufactures a generic link-only stub for each dangling target — so the
   // command that exists to CLEAR "all-generic community labels" reports success
-  // while re-creating it. Measured residue 2026-08-04: hub-dw-service 3,
-  // hub-gateway 11, hub-core-service 43, hub-frontend 68 (68 of 158 communities
+  // while re-creating it. Measured residue 2026-08-04: mono-dw-service 3,
+  // mono-gateway 11, mono-core-service 43, mono-frontend 68 (68 of 158 communities
   // — the majority of that report's links) = 125 total.
   //
   // The headings are the authority on each id's final name, and by now they are

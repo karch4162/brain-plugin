@@ -374,6 +374,7 @@ if (unverifiableSources.length) {
   const notCloned = unverifiableSources.filter((u) => !u.reason);
   const unknown = unverifiableSources.filter((u) => u.reason === 'unknown');
   const noRev = unverifiableSources.filter((u) => u.reason === 'rev');
+  const ignored = unverifiableSources.filter((u) => u.reason === 'gitignored');
   const names = (list) => [...new Set(list.map((u) => u.repo))].sort().map((r) => `\`${r}\``).join(', ');
   L.push(`## Unverifiable \`source:\` anchors (${unverifiableSources.length})`);
   L.push('');
@@ -401,6 +402,16 @@ if (unverifiableSources.length) {
     );
     L.push('');
     for (const u of noRev) L.push(`- [${u.from}](${u.from}) — \`${u.source}\``);
+    L.push('');
+  }
+  if (ignored.length) {
+    L.push(
+      `**Git-ignored vault file (${ignored.length})** — the anchor exists on this machine but the vault's ` +
+        `\`.gitignore\` excludes it (e.g. a harvested \`chats/\` digest), so it resolves for nobody who pulls the ` +
+        `vault. A transcript is not the fact: re-anchor to the tracked file, PR or commit it derives from.`
+    );
+    L.push('');
+    for (const u of ignored) L.push(`- [${u.from}](${u.from}) — \`${u.source}\``);
     L.push('');
   }
   if (unknown.length) {

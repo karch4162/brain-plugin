@@ -4,7 +4,7 @@
 // The /brain:promote gate. Promotion turns a draft into a trusted note, and the
 // whole claim to trust is the `source:` anchor: the file, PR or commit that makes
 // the fact true. On 2026-08-04 nine notes were promoted to trusted with
-// `source: hub/docs/…` anchors that could not resolve on the promoting machine.
+// `source: repo-b/docs/…` anchors that could not resolve on the promoting machine.
 // Nothing stopped it, because "verify the anchor resolves" was PROSE in a skill
 // file — and prose drifts. This script is the mechanical form of that rule.
 //
@@ -42,7 +42,8 @@
 //   exit 2  => ANCHORS: UNVERIFIABLE — nothing is broken, but at least one anchor
 //                                     could not be checked here (no checkout,
 //                                     unknown repo prefix, unfetched pinned rev,
-//                                     off-machine PR/URL) or a note carries no
+//                                     off-machine PR/URL, git-ignored vault file)
+//                                     or a note carries no
 //                                     `source:` at all. ADVISORY: promote may
 //                                     proceed once the user says so.
 // The FIRST line of output always starts with `ANCHORS: OK` (stdout) or
@@ -150,6 +151,7 @@ const REASON_FIX = {
   unknown: 'names no graphify/ mirror and no repos.json entry — add a repos.json entry for the prefix, or re-anchor to a repo name the vault knows',
   rev: 'pins a commit or branch this clone does not have (never fetched, or pruned) — git fetch the remote and re-run',
   external: 'points off this machine (a PR or URL) — nothing local can judge it; check it by hand before trusting the note',
+  gitignored: 'exists here but is git-ignored, so it resolves only on this machine (a chats/ digest is a lossy transcript, not the fact) — re-anchor to the tracked file, PR or commit the fact derives from, or declare source_untracked: true if absence is the fact',
 };
 
 function unresolvableBlock() {

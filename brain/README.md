@@ -124,7 +124,7 @@ The split already exists in the design: `.saveinclude` deliberately excludes tru
 
 Measured 2026-08-05, across the two real vaults:
 
-| | `karch4162/personal-brain` | `vendsy/tray-brain` |
+| | `karch4162/personal-brain` | `<org>/team-brain` |
 |---|---|---|
 | Owner / plan | user, free | org, Team |
 | Branch protection | **impossible** — API 403, *"Upgrade to GitHub Pro or make this repository public"* | active: PR required, 1 approval |
@@ -147,7 +147,7 @@ Every command that commits to a vault goes through it. `/brain:save` step 6 and 
 
 The last row is the one that makes the guarantee real. The git index is **global to the checkout**, so a concurrent session or a stray `git add` can stage anything at all; being careful about what *we* add only governs what we add. Checking the index before committing is what turns "we only commit allowlisted paths" from an intention into a property. And every guard runs *before* the first `git add`, so a refusal leaves the index exactly as it found it — nothing staged, nothing to clean up.
 
-**What it does not protect against:** someone running raw `git` outside the tooling. That is a real and permanent hole — but it is already the situation on `personal-brain` (no platform enforcement possible), and `enforce_admins: false` makes it effectively the situation on `tray-brain` too. Recording the trade honestly is the point; pretending branch protection closed it was the error.
+**What it does not protect against:** someone running raw `git` outside the tooling. That is a real and permanent hole — but it is already the situation on `personal-brain` (no platform enforcement possible), and `enforce_admins: false` makes it effectively the situation on `team-brain` too. Recording the trade honestly is the point; pretending branch protection closed it was the error.
 
 **What `.saveinclude` is:** the vault's whole permission model, one path or glob per line. Add a path to permit committing it, leave a path off to keep it local. Trusted `wiki/` notes are deliberately absent — knowledge changes go via `/brain:promote`'s PR. Check the resolved list with:
 
@@ -240,7 +240,7 @@ Avoid by keeping graphify **pinned** (so its import stays healthy and the auto-u
 ## Status
 
 **v0.2.2** — extracted, validated, and **dogfooded end-to-end on a real proprietary repo**
-(`tray_pos_flutter`): scaffolding committed, `lib/`-scoped code graph built, wiki seeded,
+(`repo-a`): scaffolding committed, `lib/`-scoped code graph built, wiki seeded,
 graph-before-grep firing, `/brain:doctor` clean. **POC §17.1 checkbox 1 (packaging/isolation) is MET.**
 Remaining gate: the §10 with/without eval on a real repo (checkbox 2 = the go/no-go for team rollout).
 See `../AI-OS/personal-brain/INSTALL_BASELINE.md` for the acceptance checklist.
