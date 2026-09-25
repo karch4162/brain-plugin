@@ -44,11 +44,12 @@ locally at all.
 
 ## Version bumps
 
-Every behaviour change bumps the version, and it lives in three manifests
-(`brain/plugin.json`, `brain/.claude-plugin/plugin.json`,
-`brain/.codex-plugin/plugin.json`). Parallel branches therefore collide on the
-same line — expect a conflict on the second and third PR to merge, and resolve
-it by re-applying the bump rather than taking either side wholesale.
+Every behaviour change declares a bump, but **never edit a `version` field on a
+feature branch** — parallel branches collide on that line (INNOV-311). Instead
+add one fragment named after your ticket: `printf 'patch\n' > .bumps/brain/INNOV-123`
+(or `minor`/`major`; `.bumps/wave/...` for the wave plugin). Distinct filenames
+never conflict, and `tools/check-version-bump.sh` accepts the fragment. The human
+applies all fragments at release with `node tools/bump-version.mjs brain`.
 
 ## Do not touch the real vault
 

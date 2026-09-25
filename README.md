@@ -98,9 +98,13 @@ version"* and every installed copy stays frozen at the commit it was first insta
 **Version lives in ONE place: `brain/.claude-plugin/plugin.json`.** Claude Code resolves a plugin's
 version from `plugin.json` first, then the marketplace entry, then the commit SHA — so the
 `.claude-plugin/marketplace.json` entry deliberately **omits** `version` to avoid a second field to
-keep in sync. On every release:
+keep in sync. Feature branches do **not** edit `version` — parallel PRs all collide on that line.
+Each branch adds a bump fragment instead, `.bumps/brain/<ticket>` containing `patch`, `minor` or
+`major`; the CI version-bump check accepts it. On every release:
 
-1. Bump `version` in **`brain/.claude-plugin/plugin.json` only**.
+1. Run `node tools/bump-version.mjs brain`: it applies the highest pending fragment to
+   `brain/.claude-plugin/plugin.json`, regenerates the host manifests, and deletes the fragments.
+   Until this runs, merged `brain/` changes are on `main` but installs will not pick them up.
 2. Tag the release: `claude plugin tag ./brain` (creates a `brain--v<version>` git tag — it tags the
    current version, it does **not** bump for you; there's no `npm version` equivalent).
 3. Commit via the branch → PR flow (the `main`-push guardrail; see HANDOVER).
