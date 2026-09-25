@@ -134,6 +134,144 @@ commit_all "add wave"
 st="$(run_check main)"
 assert_eq "new-plugin/exit-0" "0" "$st"
 
+echo "--- 8. brain/ change + an added bump fragment passes (INNOV-311) ---"
+# Branches declare THAT they bump (.bumps/<dir>/<name>); the release step picks
+# the number. The version literal is untouched, so parallel branches can't collide.
+new_sandbox
+printf 'changed\n' >"$BOX/brain/somefile.md"
+mkdir -p "$BOX/.bumps/brain"
+printf 'patch\r\n' >"$BOX/.bumps/brain/INNOV-1"   # CRLF: the check keys on the path, not content
+commit_all "brain change with fragment"
+st="$(run_check main)"
+assert_eq "fragment/exit-0" "0" "$st"
+assert_contains "fragment/reports-declared" "$(cat "$BOX/out.txt")" ".bumps/brain/"
+
+echo "--- 9. a fragment for ANOTHER plugin does not cover brain/ ---"
+new_sandbox
+printf 'changed\n' >"$BOX/brain/somefile.md"
+mkdir -p "$BOX/.bumps/wave"
+printf 'patch\n' >"$BOX/.bumps/wave/INNOV-1"
+commit_all "brain change, wave fragment"
+st="$(run_check main)"
+assert_eq "wrong-dir-fragment/exit-1" "1" "$st"
+assert_contains "wrong-dir-fragment/names-fragment-option" "$(cat "$BOX/out.txt")" ".bumps/brain/"
+
+echo "--- 10. DELETING a fragment is not a bump declaration ---"
+new_sandbox
+mkdir -p "$BOX/.bumps/brain"
+printf 'patch\n' >"$BOX/.bumps/brain/OLD"
+git -C "$BOX" add -A && git -C "$BOX" commit -q -m "pending fragment" && git -C "$BOX" branch -q -f frag-base
+rm "$BOX/.bumps/brain/OLD"
+printf 'changed\n' >"$BOX/brain/somefile.md"
+commit_all "brain change, fragment deleted, no bump"
+st="$(run_check frag-base)"
+assert_eq "deleted-fragment/exit-1" "1" "$st"
+
+echo "--- 10b. deleting a pending fragment WITHOUT touching brain/ still fails ---"
+# Otherwise a stray cleanup PR drops an owed bump and brain/ changes ship frozen.
+new_sandbox
+mkdir -p "$BOX/.bumps/brain"
+printf 'patch\n' >"$BOX/.bumps/brain/OLD"
+git -C "$BOX" add -A && git -C "$BOX" commit -q -m "pending fragment" && git -C "$BOX" branch -q -f frag-base
+rm "$BOX/.bumps/brain/OLD"
+commit_all "drop fragment only"
+st="$(run_check frag-base)"
+assert_eq "fragment-only-delete/exit-1" "1" "$st"
+
+echo "--- 10c. a nested path under .bumps/brain/ is not a fragment ---"
+# bump-version.mjs reads direct children only; a nested file would pass CI and
+# then crash the release.
+new_sandbox
+printf 'changed\n' >"$BOX/brain/somefile.md"
+mkdir -p "$BOX/.bumps/brain/INNOV-1"
+printf 'patch\n' >"$BOX/.bumps/brain/INNOV-1/x"
+commit_all "brain change, nested fragment"
+st="$(run_check main)"
+assert_eq "nested-fragment/exit-1" "1" "$st"
+
+echo "--- 11. two branches cut from one commit merge cleanly in either order ---"
+# The ticket's acceptance #1, literally. A version-literal bump on both branches
+# conflicts here; distinct fragment files cannot.
+for order in "a b" "b a"; do
+  new_sandbox
+  git -C "$BOX" checkout -q main
+  for br in a b; do
+    git -C "$BOX" checkout -q -b "br-$br" main
+    mkdir -p "$BOX/.bumps/brain"
+    printf 'change %s\n' "$br" >"$BOX/brain/file-$br.md"
+    printf 'patch\n' >"$BOX/.bumps/brain/INNOV-$br"
+    commit_all "branch $br"
+    git -C "$BOX" checkout -q main
+  done
+  st=0
+  for br in $order; do
+    git -C "$BOX" merge -q --no-edit "br-$br" >/dev/null 2>&1 || st=1
+  done
+  assert_eq "parallel-merge[$order]/clean" "0" "$st"
+done
+
+echo "--- 12. bump-version.mjs: fragments -> one version bump, manifests regenerated ---"
+new_sandbox
+mkdir -p "$BOX/tools" "$BOX/.bumps/brain"
+cp "$REPO_ROOT/tools/bump-version.mjs" "$REPO_ROOT/tools/generate-host-manifests.mjs" "$BOX/tools/"
+printf '{"name":"brain","version":"0.3.8","author":{"name":"t"}}\n' >"$BOX/brain/.claude-plugin/plugin.json"
+printf 'patch\n' >"$BOX/.bumps/brain/INNOV-a"
+printf 'minor\r\n' >"$BOX/.bumps/brain/INNOV-b"
+(cd "$BOX" && node tools/bump-version.mjs brain) >"$BOX/out.txt" 2>&1
+assert_eq "bump/exit-0" "0" "$?"
+v="$(node -p 'require(process.argv[1]).version' "$BOX/brain/.claude-plugin/plugin.json")"
+assert_eq "bump/highest-kind-wins" "0.4.0" "$v"
+assert_eq "bump/fragments-consumed" "" "$(ls "$BOX/.bumps/brain" 2>/dev/null)"
+(cd "$BOX" && node tools/generate-host-manifests.mjs --check) >/dev/null 2>&1
+assert_eq "bump/host-manifests-in-sync" "0" "$?"
+v="$(node -p 'require(process.argv[1]).version' "$BOX/brain/.codex-plugin/plugin.json")"
+assert_eq "bump/codex-manifest-follows" "0.4.0" "$v"
+
+echo "--- 13. bump-version.mjs with no fragments changes nothing and fails ---"
+new_sandbox
+mkdir -p "$BOX/tools"
+cp "$REPO_ROOT/tools/bump-version.mjs" "$REPO_ROOT/tools/generate-host-manifests.mjs" "$BOX/tools/"
+(cd "$BOX" && node tools/bump-version.mjs brain) >"$BOX/out.txt" 2>&1
+assert_eq "bump-none/exit-1" "1" "$?"
+v="$(node -p 'require(process.argv[1]).version' "$BOX/brain/.claude-plugin/plugin.json")"
+assert_eq "bump-none/version-unchanged" "0.0.1" "$v"
+
+echo "--- 14. bump-version.mjs: empty fragment is a patch; wave has no host manifests ---"
+new_sandbox
+mkdir -p "$BOX/tools" "$BOX/wave/.claude-plugin" "$BOX/.bumps/wave"
+cp "$REPO_ROOT/tools/bump-version.mjs" "$REPO_ROOT/tools/generate-host-manifests.mjs" "$BOX/tools/"
+printf '{"name":"wave","version":"0.1.1"}\n' >"$BOX/wave/.claude-plugin/plugin.json"
+: >"$BOX/.bumps/wave/INNOV-c"
+(cd "$BOX" && node tools/bump-version.mjs wave) >"$BOX/out.txt" 2>&1
+assert_eq "bump-wave/exit-0" "0" "$?"
+v="$(node -p 'require(process.argv[1]).version' "$BOX/wave/.claude-plugin/plugin.json")"
+assert_eq "bump-wave/patch" "0.1.2" "$v"
+assert_eq "bump-wave/no-brain-manifests-written" "no" "$([ -e "$BOX/brain/plugin.json" ] && echo yes || echo no)"
+
+echo "--- 15. a release that fails mid-run cannot double-bump on retry ---"
+# Fragments are consumed before the host manifests are regenerated: a retry
+# after a generator failure finds no fragments instead of stepping again.
+new_sandbox
+mkdir -p "$BOX/tools" "$BOX/.bumps/brain" "$BOX/brain/plugin.json"   # a dir: generator write hits EISDIR
+cp "$REPO_ROOT/tools/bump-version.mjs" "$REPO_ROOT/tools/generate-host-manifests.mjs" "$BOX/tools/"
+printf '{"name":"brain","version":"0.3.8","author":{"name":"t"}}\n' >"$BOX/brain/.claude-plugin/plugin.json"
+printf 'patch\n' >"$BOX/.bumps/brain/INNOV-a"
+(cd "$BOX" && node tools/bump-version.mjs brain) >"$BOX/out.txt" 2>&1
+assert_eq "partial/exit-nonzero" "yes" "$([ $? -ne 0 ] && echo yes || echo no)"
+(cd "$BOX" && node tools/bump-version.mjs brain) >"$BOX/out.txt" 2>&1
+assert_eq "partial-retry/refuses" "1" "$?"
+v="$(node -p 'require(process.argv[1]).version' "$BOX/brain/.claude-plugin/plugin.json")"
+assert_eq "partial-retry/bumped-once" "0.3.9" "$v"
+
+echo "--- 16. bump-version.mjs rejects a name that is not a plugin dir ---"
+new_sandbox
+mkdir -p "$BOX/tools" "$BOX/.bumps/nope"
+cp "$REPO_ROOT/tools/bump-version.mjs" "$REPO_ROOT/tools/generate-host-manifests.mjs" "$BOX/tools/"
+printf 'patch\n' >"$BOX/.bumps/nope/X"
+(cd "$BOX" && node tools/bump-version.mjs nope) >"$BOX/out.txt" 2>&1
+assert_eq "unknown-plugin/exit-2" "2" "$?"
+assert_eq "unknown-plugin/fragment-kept" "X" "$(ls "$BOX/.bumps/nope")"
+
 echo
 echo "$PASSED passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]
