@@ -43,7 +43,7 @@
 #
 # Usage:
 #   bash check-plugin-version.sh                   # check THIS plugin (key derived, INNOV-318)
-#   bash check-plugin-version.sh --plugin <key>    # e.g. brain@brain-marketplace
+#   bash check-plugin-version.sh --plugin <key>    # e.g. brain@agent-infra
 #   bash check-plugin-version.sh --expect 0.2.22   # compare against an explicit version
 #
 # Contract (the /brain:doctor skill and its tests depend on exactly this):
@@ -109,7 +109,9 @@ if [[ -z "$PLUGIN_KEY" ]] && command -v node >/dev/null 2>&1; then
     const hit = mine.find(([, recs]) => (recs || []).some(r => r.installPath && norm(r.installPath) === self))
              || (mine.length === 1 ? mine[0] : null);
     if (!hit && mine.length > 1) { process.stdout.write(mine.map(([k]) => k).join(", ")); process.exit(5); }
-    process.stdout.write(hit ? hit[0] : name + "@" + name + "-marketplace");
+    // No record: report the bare name. Guessing `name@name-marketplace` named a
+    // marketplace that stopped existing when it was renamed (INNOV-320).
+    process.stdout.write(hit ? hit[0] : name);
   ' "$SELF_ROOT" "$INSTALLED_JSON" 2>/dev/null)"
   DERIVE_RC=$?
 fi

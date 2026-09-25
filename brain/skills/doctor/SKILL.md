@@ -155,7 +155,7 @@ Brain doctor — <vault name or path>
   vault allowlist      ❌ .saveinclude missing 1 of 7: graphify/ (bin/sync-graph.sh) → offer R7
   vault gitignore      ❌ .gitignore missing 1 of 6: .brain/ (machine-local session state) → offer R8
   findings tracker     ⚠️ brain.json has no tracker — next /brain:save asks and writes it
-  shadowing install    ❌ brain@brain-marketplace 0.2.36 (user) + tray-brain@tray-brain-marketplace 0.2.33 (project) → offer R9
+  shadowing install    ❌ brain@agent-infra 0.2.36 (user) + tray-brain@tray-brain-marketplace 0.2.33 (project) → offer R9
   command prefix       ❌ vault CLAUDE.md names /tray-brain: x4, installed is /brain: → offer R10
 <then apply confirmed repairs and re-check>
 ```

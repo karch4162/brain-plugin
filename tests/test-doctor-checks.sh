@@ -79,9 +79,9 @@ mk_config() { # installed_version clone_version [clone_lastUpdated]
   BOX="$(mktemp -d "$TMPROOT/boxXXXXXX")"
   local iv="$1" cv="${2:-}" upd="${3:-2026-08-06T00:00:00.000Z}"
   local cfg="$BOX/claude"
-  mkdir -p "$cfg/plugins/marketplaces/brain-marketplace/brain/.claude-plugin"
+  mkdir -p "$cfg/plugins/marketplaces/agent-infra/brain/.claude-plugin"
   cat >"$cfg/plugins/installed_plugins.json" <<JSON
-{ "version": 2, "plugins": { "brain@brain-marketplace": [
+{ "version": 2, "plugins": { "brain@agent-infra": [
   { "scope": "user",
     "installPath": "$BOX/cache/brain/$iv",
     "version": "$iv",
@@ -89,13 +89,13 @@ mk_config() { # installed_version clone_version [clone_lastUpdated]
 JSON
   if [[ -n "$cv" ]]; then
     cat >"$cfg/plugins/known_marketplaces.json" <<JSON
-{ "brain-marketplace": {
+{ "agent-infra": {
     "source": { "source": "git", "url": "https://example.invalid/brain-plugin.git" },
-    "installLocation": "$cfg/plugins/marketplaces/brain-marketplace",
+    "installLocation": "$cfg/plugins/marketplaces/agent-infra",
     "lastUpdated": "$upd" } }
 JSON
     printf '{ "name": "brain", "version": "%s" }\n' "$cv" \
-      >"$cfg/plugins/marketplaces/brain-marketplace/brain/.claude-plugin/plugin.json"
+      >"$cfg/plugins/marketplaces/agent-infra/brain/.claude-plugin/plugin.json"
   else
     echo '{}' >"$cfg/plugins/known_marketplaces.json"
   fi
@@ -128,7 +128,7 @@ assert_contains "version/drift-names-expected" "0.2.22" "$(out_all)" "$(evidence
 # report success and change nothing. A repair that omits step 1 is a repair that
 # silently does not work — verified against a real 0.2.19 -> 0.2.22 drift.
 assert_contains "version/remedy-has-marketplace-update" "plugin marketplace update" "$(out_all)" "$(evidence)"
-assert_contains "version/remedy-has-plugin-update" "plugin update brain@brain-marketplace" "$(out_all)" "$(evidence)"
+assert_contains "version/remedy-has-plugin-update" "plugin update brain@agent-infra" "$(out_all)" "$(evidence)"
 assert_contains "version/remedy-warns-second-alone-insufficient" "not enough" "$(out_all)" "$(evidence)"
 
 # --- 4. no install record => SKIPPED, never OK ---------------------------
@@ -139,6 +139,11 @@ echo '{ "version": 2, "plugins": {} }' >"$CFG/plugins/installed_plugins.json"
 run_version
 assert_eq "version/no-install-record-exit-0" "0" "$STATUS" "$(evidence)"
 assert_prefix "version/no-install-record-skipped" "PLUGIN-VERSION: SKIPPED" "$(first_line "$BOX/out.txt")" "$(evidence)"
+# With no record to read a marketplace from, the key must not be invented from a
+# naming convention: `name@name-marketplace` named a marketplace that no longer
+# exists once it was renamed agent-infra (INNOV-320).
+assert_eq "version/no-install-record-no-invented-marketplace" "0" \
+  "$(first_line "$BOX/out.txt" | grep -c -- '-marketplace' || true)" "$(evidence)"
 
 # --- 5. no marketplace clone => SKIPPED, never OK ------------------------
 # The critical fail-safe direction: an UNKNOWN expected version is not a match.
@@ -174,7 +179,7 @@ assert_eq "version/one-verdict-line" "1" \
 # resolves instantly). origin/HEAD is deliberately absent (remote add + fetch
 # never sets it), so this also exercises the origin/main fallback.
 gitify_clone() { # "unreachable" | <n commits ahead on origin>
-  local clone="$CFG/plugins/marketplaces/brain-marketplace"
+  local clone="$CFG/plugins/marketplaces/agent-infra"
   local origin="$BOX/origin.git"
   ( cd "$clone" \
     && git -c init.defaultBranch=main init -q . \
@@ -207,7 +212,7 @@ assert_eq "version/stale-clone-remote-exit-1" "1" "$STATUS" "$(evidence)"
 assert_prefix "version/stale-clone-remote-verdict" "PLUGIN-VERSION: STALE-CLONE" "$(first_line "$BOX/err.txt")" "$(evidence)"
 assert_contains "version/stale-clone-remote-says-behind" "behind" "$(out_all)" "$(evidence)"
 assert_contains "version/stale-clone-remote-remedy-marketplace-first" "plugin marketplace update" "$(out_all)" "$(evidence)"
-assert_contains "version/stale-clone-remote-remedy-plugin-update" "plugin update brain@brain-marketplace" "$(out_all)" "$(evidence)"
+assert_contains "version/stale-clone-remote-remedy-plugin-update" "plugin update brain@agent-infra" "$(out_all)" "$(evidence)"
 
 # (b) origin unreachable => OK, exit 0, but SAYS the remote was not checked.
 # Offline machines must never fail the health check — hard requirement.
@@ -475,7 +480,7 @@ echo "--- E. check 7 derives its own plugin key (INNOV-318) ---"
 
 # --- 26. NEGATIVE CONTROL: a renamed install is followed, not ignored -------
 # The trap: a key handed in (or hardcoded) goes stale on rename. Build the
-# fixture so the OLD behavior goes fully GREEN — brain@brain-marketplace is
+# fixture so the OLD behavior goes fully GREEN — brain@agent-infra is
 # present and current — while the copy actually running is `tray-brain`, and
 # drifted. A derived key must report the tray-brain drift.
 mk_config "0.2.22" "0.2.22"
@@ -487,11 +492,11 @@ printf '{ "name": "tray-brain", "version": "0.2.36" }\n' \
   >"$CFG/plugins/marketplaces/tray-brain-marketplace/brain/.claude-plugin/plugin.json"
 cat >"$CFG/plugins/installed_plugins.json" <<JSON
 { "version": 2, "plugins": {
-  "brain@brain-marketplace": [ { "scope": "user", "installPath": "$BOX/cache/brain/0.2.22", "version": "0.2.22" } ],
+  "brain@agent-infra": [ { "scope": "user", "installPath": "$BOX/cache/brain/0.2.22", "version": "0.2.22" } ],
   "tray-brain@tray-brain-marketplace": [ { "scope": "user", "installPath": "$(native "$PLUG")", "version": "0.2.30" } ] } }
 JSON
 cat >"$CFG/plugins/known_marketplaces.json" <<JSON
-{ "brain-marketplace": { "installLocation": "$CFG/plugins/marketplaces/brain-marketplace", "lastUpdated": "2026-08-06T00:00:00.000Z" },
+{ "agent-infra": { "installLocation": "$CFG/plugins/marketplaces/agent-infra", "lastUpdated": "2026-08-06T00:00:00.000Z" },
   "tray-brain-marketplace": { "installLocation": "$CFG/plugins/marketplaces/tray-brain-marketplace", "lastUpdated": "2026-08-06T00:00:00.000Z" } }
 JSON
 VERSION_CHECK_SAVED="$VERSION_CHECK"; VERSION_CHECK="$PLUG/bin/check-plugin-version.sh"
@@ -500,24 +505,53 @@ VERSION_CHECK="$VERSION_CHECK_SAVED"
 assert_eq "version/renamed-install-exit-1" "1" "$STATUS" "$(evidence)"
 assert_prefix "version/renamed-install-drifted" "PLUGIN-VERSION: DRIFTED - tray-brain@tray-brain-marketplace" "$(first_line "$BOX/err.txt")" "$(evidence)"
 
-# --- 27. positive control: the repo copy derives brain@brain-marketplace ----
+# --- 27. positive control: the repo copy derives brain@agent-infra ----
 # (Every case in section A also runs with no --plugin, so it covers this too;
 # this one names it.)
 mk_config "0.2.22" "0.2.22"
 run_version
-assert_contains "version/derived-key-is-brain" "brain@brain-marketplace" "$(first_line "$BOX/out.txt")" "$(evidence)"
+assert_contains "version/derived-key-is-brain" "brain@agent-infra" "$(first_line "$BOX/out.txt")" "$(evidence)"
 
 # --- 27b. same name in two marketplaces, neither is this copy => SKIPPED ---
 # Picking one could check an unrelated install and report OK.
 mk_config "0.2.22" "0.2.22"
 cat >"$CFG/plugins/installed_plugins.json" <<JSON
 { "version": 2, "plugins": {
-  "brain@brain-marketplace": [ { "scope": "user", "installPath": "$BOX/a", "version": "0.2.22" } ],
+  "brain@agent-infra": [ { "scope": "user", "installPath": "$BOX/a", "version": "0.2.22" } ],
   "brain@other-marketplace": [ { "scope": "user", "installPath": "$BOX/b", "version": "0.2.10" } ] } }
 JSON
 run_version
 assert_eq "version/ambiguous-name-exit-0" "0" "$STATUS" "$(evidence)"
 assert_prefix "version/ambiguous-name-skipped" "PLUGIN-VERSION: SKIPPED" "$(first_line "$BOX/out.txt")" "$(evidence)"
+
+# --- 27d. NEGATIVE CONTROL for the agent-infra rename (INNOV-320) ----------
+# Mid-migration a machine holds the stale key brain@brain-marketplace (current
+# against its own clone, so it would report OK) AND brain@agent-infra, which is
+# the copy actually running, drifted. Same name in two marketplaces, one of them
+# is this copy: the self-match must pick agent-infra and report the drift.
+mk_config "0.2.22" "0.2.22"
+PLUG="$BOX/cache/agent-infra/brain/0.2.30"
+mkdir -p "$PLUG/bin" "$PLUG/.claude-plugin" "$CFG/plugins/marketplaces/brain-marketplace/brain/.claude-plugin"
+cp "$VERSION_CHECK" "$PLUG/bin/check-plugin-version.sh"
+printf '{ "name": "brain", "version": "0.2.30" }\n' >"$PLUG/.claude-plugin/plugin.json"
+printf '{ "name": "brain", "version": "0.2.22" }\n' \
+  >"$CFG/plugins/marketplaces/brain-marketplace/brain/.claude-plugin/plugin.json"
+printf '{ "name": "brain", "version": "0.2.36" }\n' \
+  >"$CFG/plugins/marketplaces/agent-infra/brain/.claude-plugin/plugin.json"
+cat >"$CFG/plugins/installed_plugins.json" <<JSON
+{ "version": 2, "plugins": {
+  "brain@brain-marketplace": [ { "scope": "user", "installPath": "$BOX/cache/brain/0.2.22", "version": "0.2.22" } ],
+  "brain@agent-infra": [ { "scope": "user", "installPath": "$(native "$PLUG")", "version": "0.2.30" } ] } }
+JSON
+cat >"$CFG/plugins/known_marketplaces.json" <<JSON
+{ "brain-marketplace": { "installLocation": "$CFG/plugins/marketplaces/brain-marketplace", "lastUpdated": "2026-08-06T00:00:00.000Z" },
+  "agent-infra": { "installLocation": "$CFG/plugins/marketplaces/agent-infra", "lastUpdated": "2026-08-06T00:00:00.000Z" } }
+JSON
+VERSION_CHECK_SAVED="$VERSION_CHECK"; VERSION_CHECK="$PLUG/bin/check-plugin-version.sh"
+run_version
+VERSION_CHECK="$VERSION_CHECK_SAVED"
+assert_eq "version/stale-old-marketplace-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "version/stale-old-marketplace-drifted" "PLUGIN-VERSION: DRIFTED - brain@agent-infra" "$(first_line "$BOX/err.txt")" "$(evidence)"
 
 # --- 27c. this copy's manifest unreadable => SKIPPED, no fixed-key fallback --
 mk_config "0.2.22" "0.2.22"
@@ -543,14 +577,14 @@ run_shadow() {
   ) >"$BOX/out.txt" 2>"$BOX/err.txt"
   STATUS=$?
 }
-USER_REC='"brain@brain-marketplace": [ { "scope": "user", "installPath": "/x/brain/0.2.36", "version": "0.2.36" } ]'
+USER_REC='"brain@agent-infra": [ { "scope": "user", "installPath": "/x/brain/0.2.36", "version": "0.2.36" } ]'
 
 # --- 28. SPO-324: user-scoped + project-scoped => SHADOWED naming both scopes
 mk_shadow "$USER_REC, \"tray-brain@tray-brain-marketplace\": [ { \"scope\": \"project\", \"projectPath\": \"@PROJ@\", \"installPath\": \"/x/tray-brain/0.2.33\", \"version\": \"0.2.33\" } ]"
 run_shadow
 assert_eq "shadow/two-scopes-exit-1" "1" "$STATUS" "$(evidence)"
 assert_prefix "shadow/two-scopes-verdict" "SHADOW-INSTALL: SHADOWED" "$(first_line "$BOX/err.txt")" "$(evidence)"
-assert_contains "shadow/names-user-scope" "brain@brain-marketplace 0.2.36 (user scope" "$(out_all)" "$(evidence)"
+assert_contains "shadow/names-user-scope" "brain@agent-infra 0.2.36 (user scope" "$(out_all)" "$(evidence)"
 assert_contains "shadow/names-project-scope" "tray-brain@tray-brain-marketplace 0.2.33 (project scope" "$(out_all)" "$(evidence)"
 assert_contains "shadow/exact-uninstall-command" "claude plugin uninstall tray-brain@tray-brain-marketplace --scope project" "$(out_all)" "$(evidence)"
 
@@ -561,7 +595,7 @@ assert_eq "shadow/one-exit-0" "0" "$STATUS" "$(evidence)"
 assert_prefix "shadow/one-verdict" "SHADOW-INSTALL: OK" "$(first_line "$BOX/out.txt")" "$(evidence)"
 
 # --- 30. a non-brain sibling (wave) is not a shadow -------------------------
-mk_shadow "$USER_REC, \"wave@brain-marketplace\": [ { \"scope\": \"user\", \"installPath\": \"/x/wave/0.1.2\", \"version\": \"0.1.2\" } ]"
+mk_shadow "$USER_REC, \"wave@agent-infra\": [ { \"scope\": \"user\", \"installPath\": \"/x/wave/0.1.2\", \"version\": \"0.1.2\" } ]"
 run_shadow
 assert_eq "shadow/wave-not-counted" "0" "$STATUS" "$(evidence)"
 
