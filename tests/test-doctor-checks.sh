@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# test-doctor-checks.sh — quality gate for /brain:doctor checks 7, 8 and 9:
+# test-doctor-checks.sh — quality gate for /brain:doctor checks 7, 8, 9, 12 and 13:
 #   brain/bin/check-plugin-version.sh   (INNOV-277)
 #   brain/bin/check-allowlist.sh        (INNOV-278)
 #   brain/bin/check-gitignore.sh        (INNOV-281)
+#   brain/bin/check-shadow-install.sh   (INNOV-318, check 12)
+#   brain/bin/check-command-prefix.sh   (INNOV-318, check 13)
+# plus check 7 deriving its own plugin key (INNOV-318).
 #
 # Both exist because a silent precondition failure cost this workstream real
 # work. Check 7: the author's own install was 0.2.19 against a 0.2.22 source,
@@ -461,6 +464,151 @@ assert_prefix "gitignore/zero-markers-verdict" "GITIGNORE: INCOMPLETE" "$(first_
 assert_eq "gitignore/template-has-6-markers" "6" \
   "$(grep -c '^# doctor:required ' "$GI_TEMPLATE")" \
   "required: chats/, 4 graphify scratch patterns, .brain/"
+
+# ================================================ INNOV-318: checks 7, 12, 13 ===
+SHADOW_CHECK="$REPO_ROOT/brain/bin/check-shadow-install.sh"
+PREFIX_CHECK="$REPO_ROOT/brain/bin/check-command-prefix.sh"
+# The path form the scripts compare against: Windows-native on Git Bash.
+native() { (cd "$1" && { pwd -W 2>/dev/null || pwd; }); }
+
+echo "--- E. check 7 derives its own plugin key (INNOV-318) ---"
+
+# --- 26. NEGATIVE CONTROL: a renamed install is followed, not ignored -------
+# The trap: a key handed in (or hardcoded) goes stale on rename. Build the
+# fixture so the OLD behavior goes fully GREEN — brain@brain-marketplace is
+# present and current — while the copy actually running is `tray-brain`, and
+# drifted. A derived key must report the tray-brain drift.
+mk_config "0.2.22" "0.2.22"
+PLUG="$BOX/cache/tray-brain-marketplace/tray-brain/0.2.30"
+mkdir -p "$PLUG/bin" "$PLUG/.claude-plugin" "$CFG/plugins/marketplaces/tray-brain-marketplace/brain/.claude-plugin"
+cp "$VERSION_CHECK" "$PLUG/bin/check-plugin-version.sh"
+printf '{ "name": "tray-brain", "version": "0.2.30" }\n' >"$PLUG/.claude-plugin/plugin.json"
+printf '{ "name": "tray-brain", "version": "0.2.36" }\n' \
+  >"$CFG/plugins/marketplaces/tray-brain-marketplace/brain/.claude-plugin/plugin.json"
+cat >"$CFG/plugins/installed_plugins.json" <<JSON
+{ "version": 2, "plugins": {
+  "brain@brain-marketplace": [ { "scope": "user", "installPath": "$BOX/cache/brain/0.2.22", "version": "0.2.22" } ],
+  "tray-brain@tray-brain-marketplace": [ { "scope": "user", "installPath": "$(native "$PLUG")", "version": "0.2.30" } ] } }
+JSON
+cat >"$CFG/plugins/known_marketplaces.json" <<JSON
+{ "brain-marketplace": { "installLocation": "$CFG/plugins/marketplaces/brain-marketplace", "lastUpdated": "2026-08-06T00:00:00.000Z" },
+  "tray-brain-marketplace": { "installLocation": "$CFG/plugins/marketplaces/tray-brain-marketplace", "lastUpdated": "2026-08-06T00:00:00.000Z" } }
+JSON
+VERSION_CHECK_SAVED="$VERSION_CHECK"; VERSION_CHECK="$PLUG/bin/check-plugin-version.sh"
+run_version
+VERSION_CHECK="$VERSION_CHECK_SAVED"
+assert_eq "version/renamed-install-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "version/renamed-install-drifted" "PLUGIN-VERSION: DRIFTED - tray-brain@tray-brain-marketplace" "$(first_line "$BOX/err.txt")" "$(evidence)"
+
+# --- 27. positive control: the repo copy derives brain@brain-marketplace ----
+# (Every case in section A also runs with no --plugin, so it covers this too;
+# this one names it.)
+mk_config "0.2.22" "0.2.22"
+run_version
+assert_contains "version/derived-key-is-brain" "brain@brain-marketplace" "$(first_line "$BOX/out.txt")" "$(evidence)"
+
+echo "--- F. check-shadow-install.sh (INNOV-318, check 12) ---"
+
+mk_shadow() { # installed_plugins.json body (plugins map); @PROJ@ = this project's path
+  BOX="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+  CFG="$BOX/claude"; PROJ="$BOX/project"
+  mkdir -p "$CFG/plugins" "$PROJ/.claude"
+  PROJ_N="$(native "$PROJ")"
+  printf '{ "version": 2, "plugins": { %s } }\n' "${1//@PROJ@/$PROJ_N}" >"$CFG/plugins/installed_plugins.json"
+}
+run_shadow() {
+  ( CLAUDE_CONFIG_DIR="$CFG" CLAUDE_PROJECT_DIR="$PROJ" bash "$SHADOW_CHECK" "$@"
+  ) >"$BOX/out.txt" 2>"$BOX/err.txt"
+  STATUS=$?
+}
+USER_REC='"brain@brain-marketplace": [ { "scope": "user", "installPath": "/x/brain/0.2.36", "version": "0.2.36" } ]'
+
+# --- 28. SPO-324: user-scoped + project-scoped => SHADOWED naming both scopes
+mk_shadow "$USER_REC, \"tray-brain@tray-brain-marketplace\": [ { \"scope\": \"project\", \"projectPath\": \"@PROJ@\", \"installPath\": \"/x/tray-brain/0.2.33\", \"version\": \"0.2.33\" } ]"
+run_shadow
+assert_eq "shadow/two-scopes-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "shadow/two-scopes-verdict" "SHADOW-INSTALL: SHADOWED" "$(first_line "$BOX/err.txt")" "$(evidence)"
+assert_contains "shadow/names-user-scope" "brain@brain-marketplace 0.2.36 (user scope" "$(out_all)" "$(evidence)"
+assert_contains "shadow/names-project-scope" "tray-brain@tray-brain-marketplace 0.2.33 (project scope" "$(out_all)" "$(evidence)"
+assert_contains "shadow/exact-uninstall-command" "claude plugin uninstall tray-brain@tray-brain-marketplace --scope project" "$(out_all)" "$(evidence)"
+
+# --- 29. one install => OK --------------------------------------------------
+mk_shadow "$USER_REC"
+run_shadow
+assert_eq "shadow/one-exit-0" "0" "$STATUS" "$(evidence)"
+assert_prefix "shadow/one-verdict" "SHADOW-INSTALL: OK" "$(first_line "$BOX/out.txt")" "$(evidence)"
+
+# --- 30. a non-brain sibling (wave) is not a shadow -------------------------
+mk_shadow "$USER_REC, \"wave@brain-marketplace\": [ { \"scope\": \"user\", \"installPath\": \"/x/wave/0.1.2\", \"version\": \"0.1.2\" } ]"
+run_shadow
+assert_eq "shadow/wave-not-counted" "0" "$STATUS" "$(evidence)"
+
+# --- 31. a project-scoped record for ANOTHER project is not live here -------
+mk_shadow "$USER_REC, \"tray-brain@tray-brain-marketplace\": [ { \"scope\": \"project\", \"projectPath\": \"/somewhere/else\", \"installPath\": \"/x/t\", \"version\": \"0.2.33\" } ]"
+run_shadow
+assert_eq "shadow/other-project-exit-0" "0" "$STATUS" "$(evidence)"
+
+# --- 32. enabled only in the project's settings.json still counts -----------
+mk_shadow "$USER_REC"
+printf '{ "enabledPlugins": { "tray-brain@tray-brain-marketplace": true } }\r\n' >"$PROJ/.claude/settings.json"
+run_shadow
+assert_eq "shadow/project-settings-exit-1" "1" "$STATUS" "$(evidence)"
+assert_contains "shadow/project-settings-scope" "tray-brain@tray-brain-marketplace ? (project scope" "$(out_all)" "$(evidence)"
+
+# --- 33. explicitly disabled at its scope => not live -----------------------
+mk_shadow "$USER_REC, \"tray-brain@tray-brain-marketplace\": [ { \"scope\": \"user\", \"installPath\": \"/x/t\", \"version\": \"0.2.33\" } ]"
+printf '{ "enabledPlugins": { "tray-brain@tray-brain-marketplace": false } }\n' >"$CFG/settings.json"
+run_shadow
+assert_eq "shadow/disabled-exit-0" "0" "$STATUS" "$(evidence)"
+
+# --- 34. nothing installed => SKIPPED, never OK -----------------------------
+mk_shadow ""
+run_shadow
+assert_eq "shadow/none-exit-0" "0" "$STATUS" "$(evidence)"
+assert_prefix "shadow/none-skipped" "SHADOW-INSTALL: SKIPPED" "$(first_line "$BOX/out.txt")" "$(evidence)"
+
+echo "--- G. check-command-prefix.sh (INNOV-318, check 13) ---"
+
+mk_pvault() { # CLAUDE.md content (printf format, so \r\n is literal CRLF)
+  BOX="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+  VAULT="$BOX/vault"; mkdir -p "$VAULT/wiki"
+  printf "$1" >"$VAULT/CLAUDE.md"
+}
+run_prefix() {
+  ( unset CLAUDE_PROJECT_DIR
+    BRAIN_ROOT="$VAULT" bash "$PREFIX_CHECK" "$@"
+  ) >"$BOX/out.txt" 2>"$BOX/err.txt"
+  STATUS=$?
+}
+crs() { tr -cd '\r' <"$1" | wc -c | tr -d ' '; }
+
+# --- 35. /tray-brain: under a brain install => STALE, then repaired (CRLF) --
+mk_pvault 'Run /tray-brain:save at the end.\r\nStart with /tray-brain:resume.\r\nNot ours: /foo:save and /tray-brain:unknown.\r\n'
+run_prefix
+assert_eq "prefix/stale-exit-1" "1" "$STATUS" "$(evidence)"
+assert_prefix "prefix/stale-verdict" "COMMAND-PREFIX: STALE" "$(first_line "$BOX/err.txt")" "$(evidence)"
+assert_contains "prefix/stale-names-prefix" "/tray-brain: x2" "$(out_all)" "$(evidence)"
+cr_before="$(crs "$VAULT/CLAUDE.md")"
+run_prefix --fix
+assert_eq "prefix/fix-exit-0" "0" "$STATUS" "$(evidence)"
+assert_eq "prefix/fix-rewrote" "Run /brain:save at the end.|Start with /brain:resume.|Not ours: /foo:save and /tray-brain:unknown.|" \
+  "$(tr -d '\r' <"$VAULT/CLAUDE.md" | tr '\n' '|')"
+assert_eq "prefix/fix-keeps-crlf" "$cr_before" "$(crs "$VAULT/CLAUDE.md")"
+run_prefix
+assert_eq "prefix/fix-then-clean" "0" "$STATUS" "$(evidence)"
+
+# --- 36. already matching => OK and byte-identical --------------------------
+mk_pvault 'Run /brain:save.\r\nAnd /brain:doctor.\r\n'
+cp "$VAULT/CLAUDE.md" "$BOX/before.md"
+run_prefix --fix
+assert_prefix "prefix/matching-verdict" "COMMAND-PREFIX: OK" "$(first_line "$BOX/out.txt")" "$(evidence)"
+if cmp -s "$BOX/before.md" "$VAULT/CLAUDE.md"; then pass "prefix/matching-byte-identical"
+else fail "prefix/matching-byte-identical" "--fix changed a file with nothing stale"; fi
+
+# --- 37. not a vault => SKIPPED ----------------------------------------------
+BOX="$(mktemp -d "$TMPROOT/boxXXXXXX")"; VAULT="$BOX"
+run_prefix
+assert_prefix "prefix/non-vault-skipped" "COMMAND-PREFIX: SKIPPED" "$(first_line "$BOX/out.txt")" "$(evidence)"
 
 echo
 echo "$PASSED passed, $FAILED failed"
