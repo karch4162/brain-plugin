@@ -5,30 +5,35 @@ import { fileURLToPath } from 'node:url';
 import { normalizeRemote } from '../bin/resolve-repos.mjs';
 import { home, digest, readJson, writeJson, locked, git, bashScript } from './runtime.mjs';
 
+// Plain realpathSync leaves a Windows 8.3 short name and its casing exactly as given,
+// while git always reports the long, canonically-cased path — so under a short path
+// such as C:\Users\RUNNER~1\ the two never compare equal. native resolves both forms.
+const real = p => realpathSync.native(p);
+
 export function remoteIdentity(value) {
   if (/^https?:\/\//i.test(value)) {
     const url = new URL(value);
     if (url.username || url.password || url.search || url.hash) throw new Error('Use a repository URL without credentials, query parameters, or fragments. Authenticate through Git.');
     if (url.protocol !== 'https:') throw new Error('Use HTTPS or SSH for remote vaults.');
   }
-  if (/^file:\/\//.test(value)) return `local:${realpathSync(fileURLToPath(value))}`;
+  if (/^file:\/\//.test(value)) return `local:${real(fileURLToPath(value))}`;
   if (!/^(https:\/\/|ssh:\/\/|git@[^:]+:)/.test(value)) throw new Error('Expected a local vault directory, HTTPS repository URL, or SSH Git remote.');
   if (/\s|[\r\n]/.test(value)) throw new Error('Invalid repository URL.');
   if (value.startsWith('ssh://') && new URL(value).password) throw new Error('Do not put credentials in repository URLs.');
   return normalizeRemote(value);
 }
 export function assertVault(path) {
-  path = realpathSync(resolve(path));
+  path = real(resolve(path));
   if (!existsSync(join(path, 'wiki')) || !existsSync(join(path, '.saveinclude'))) throw new Error('Expected a Brain vault containing wiki/ and .saveinclude. Scaffold a new vault with the init skill first.');
   const top = git(path, ['rev-parse', '--show-toplevel']);
-  if (realpathSync(top) !== path) throw new Error('Vault must be the root of its own Git checkout.');
+  if (real(top) !== path) throw new Error('Vault must be the root of its own Git checkout.');
   git(path, ['rev-parse', '--verify', 'HEAD']);
   return path;
 }
 function identityForPath(path) {
   const remote = git(path, ['config', '--get', 'remote.origin.url'], true);
-  if (!remote) return `local:${realpathSync(path)}`;
-  return existsSync(remote) ? `local:${realpathSync(remote)}` : remoteIdentity(remote);
+  if (!remote) return `local:${real(path)}`;
+  return existsSync(remote) ? `local:${real(remote)}` : remoteIdentity(remote);
 }
 function projectBinding(project) {
   let at = resolve(project);

@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { remoteOf, resolveRepos } from '../brain/bin/resolve-repos.mjs';
+import { assertVault } from '../brain/core/vaults.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const cli = join(root, 'brain/bin/brain.mjs');
@@ -100,6 +101,16 @@ test('bad vaults and credential-bearing URLs do not bind a project', t => {
   assert.equal(f.run('init', '--vault', f.project).exit, 1);
   assert.equal(f.run('init', '--vault', 'https://secret:token@github.com/org/vault').exit, 1);
   assert.equal(existsSync(join(f.project, '.brain/config.json')), false);
+});
+
+// A Windows short name (C:\Users\RUNNER~1\) or off-case path must still bind: git
+// reports the long canonical path, so a non-canonical compare refuses the vault
+// outright. Case is the portable stand-in for the 8.3 name the CI runner supplies.
+test('a non-canonical vault path still binds', { skip: process.platform !== 'win32' && 'Windows path canonicalization' }, t => {
+  const f = fixture(t);
+  const offCase = f.source.replace(/source$/, 'SOURCE');
+  assert.notEqual(offCase, f.source);
+  assert.equal(assertVault(offCase), assertVault(f.source));
 });
 
 test('hot pins belong to sessions and concurrent writes honor a lock', t => {
