@@ -348,6 +348,13 @@ else
   pass "antidrift/doctor-skill-does-not-restate-the-list"
 fi
 
+# INNOV-293: the registry's governance block has no reader that enforces it
+# (INNOV-297 decides what it should do). Nothing may claim it is applied.
+claims=$(grep -liE 'appl(y|ies) its (governance|policy)' \
+  "$REPO_ROOT/brain/skills/init/SKILL.md" "$REPO_ROOT/brain/templates/brain-registry.example.json")
+assert_eq "antidrift/governance-not-claimed-as-enforced" "" "$claims" \
+  "the governance profile is recorded, not enforced; these files claim it is applied"
+
 # --- 19. the shipped template satisfies its own check -------------------
 # A fresh vault must be born passing. If the template and the required set
 # disagree, every NEW vault is created broken.
