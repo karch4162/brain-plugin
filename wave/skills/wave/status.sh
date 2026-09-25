@@ -16,8 +16,11 @@ REPO_ID="$(orca_repo_id)"
 orca worktree ps --json | python -c "
 import sys, json
 repo, sweep = sys.argv[1], sys.argv[2] == '--sweep'
+# ps emits worktreeId, list emits id; same <repoId>::<path> value. Read either, so a
+# schema rename cannot turn the leftover check into a silent all-clear.
+def worktree_id(w): return w.get('worktreeId') or w.get('id') or ''
 for w in json.load(sys.stdin)['result']['worktrees']:
-    if w['isMainWorktree'] or not w['worktreeId'].startswith(repo + '::'): continue
+    if w['isMainWorktree'] or not worktree_id(w).startswith(repo + '::'): continue
     pr = w.get('linkedPR') or {}
     if not sweep:
         print(w['displayName'], '|', w.get('workspaceStatus'), '| PR', pr.get('number'), pr.get('state'))

@@ -100,7 +100,11 @@ REPO_ID="$(orca_repo_id)"
 TAKEN="$(orca worktree list --json | python -c "
 import sys, json
 issue, slug, repo = sys.argv[1:4]
-print(any(w['worktreeId'].startswith(repo + '::') and
+# orca worktree list renamed worktreeId -> id; ps still emits worktreeId. Both carry
+# the same <repoId>::<path> value, so read whichever this orca build supplies rather
+# than crashing the claim guard - the one lock that stops two workers taking an issue.
+def worktree_id(w): return w.get('worktreeId') or w.get('id') or ''
+print(any(worktree_id(w).startswith(repo + '::') and
           (w.get('displayName') == slug or w.get('linkedLinearIssue') == issue)
           for w in json.load(sys.stdin)['result']['worktrees']))
 " "$ISSUE" "$SLUG" "$REPO_ID")"
