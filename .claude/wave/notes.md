@@ -26,6 +26,14 @@ gate, and that is how a wave ends up running all night with nothing to show.
 3. Push the branch and let CI run all 27 on both runners. CI is the authority on
    "the full suite is green", not a local run.
 
+**Actions ARE running.** The repo is public and GitHub Actions has been live
+since 2026-09-25; `main` is green on both runners. They were billing-blocked
+before that, and every job died at `steps=0` — that era is over. If your PR
+shows no checks yet, they are queued or still running: the Windows job alone
+takes 9-11 minutes. Wait for them. Do not conclude "checks will not start" and
+fall back to local-only evidence, and do not write that into a ticket or a
+summary — a red or missing check is now real signal about your branch.
+
 **Never run the suites in parallel.** They contend and invent failures that do
 not reproduce serially.
 
