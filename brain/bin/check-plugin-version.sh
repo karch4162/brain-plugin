@@ -90,6 +90,7 @@ MARKETS_JSON="$CLAUDE_DIR/plugins/known_marketplaces.json"
 # `pwd -W` gives Git Bash a Windows-native path node can resolve; elsewhere it
 # fails and plain pwd is already native.
 SELF_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && { pwd -W 2>/dev/null || pwd; })"
+DERIVE_RC=0
 if [[ -z "$PLUGIN_KEY" ]] && command -v node >/dev/null 2>&1; then
   PLUGIN_KEY="$(node -e '
     const fs = require("fs"), path = require("path");
@@ -102,14 +103,16 @@ if [[ -z "$PLUGIN_KEY" ]] && command -v node >/dev/null 2>&1; then
     try { keys = Object.entries(JSON.parse(fs.readFileSync(process.argv[2], "utf8")).plugins || {}); } catch (e) {}
     const mine = keys.filter(([k]) => k.slice(0, k.lastIndexOf("@")) === name);
     const self = norm(process.argv[1]);
-    const hit = mine.find(([, recs]) => (recs || []).some(r => r.installPath && norm(r.installPath) === self)) || mine[0];
+    // A name alone is only trusted when it is unique: with the same name in
+    // two marketplaces and no record for THIS copy, picking one could check an
+    // unrelated install and report OK. Exit 5 => the caller reports SKIPPED.
+    const hit = mine.find(([, recs]) => (recs || []).some(r => r.installPath && norm(r.installPath) === self))
+             || (mine.length === 1 ? mine[0] : null);
+    if (!hit && mine.length > 1) { process.stdout.write(mine.map(([k]) => k).join(", ")); process.exit(5); }
     process.stdout.write(hit ? hit[0] : name + "@" + name + "-marketplace");
   ' "$SELF_ROOT" "$INSTALLED_JSON" 2>/dev/null)"
+  DERIVE_RC=$?
 fi
-[[ -n "$PLUGIN_KEY" ]] || PLUGIN_KEY="brain@brain-marketplace"
-
-PLUGIN_NAME="${PLUGIN_KEY%@*}"
-MARKET_NAME="${PLUGIN_KEY#*@}"
 
 skipped() { # reason, then extra lines
   echo "PLUGIN-VERSION: SKIPPED - $1"
@@ -154,6 +157,12 @@ read_market_location() {
 
 # --- 0. preconditions -------------------------------------------------------
 command -v node >/dev/null 2>&1 || skipped "node is not on PATH, cannot read the plugin registries"
+# Never substitute a fixed key for a failed derivation: that is the rename
+# false-green again, reached by a different road.
+[[ $DERIVE_RC -eq 5 ]] && skipped "several installs share this plugin's name and none is this copy: $PLUGIN_KEY"   "Pass --plugin <name@marketplace> to pick one."
+[[ -n "$PLUGIN_KEY" ]] || skipped "cannot read this copy's name from '$SELF_ROOT/.claude-plugin/plugin.json'"   "Pass --plugin <name@marketplace> to check a specific install."
+PLUGIN_NAME="${PLUGIN_KEY%@*}"
+MARKET_NAME="${PLUGIN_KEY#*@}"
 [[ -f "$INSTALLED_JSON" ]] || skipped "no installed_plugins.json at '$INSTALLED_JSON'" \
   "This machine may run the plugin from source (--plugin-dir), which never goes stale."
 

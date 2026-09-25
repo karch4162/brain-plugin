@@ -507,6 +507,28 @@ mk_config "0.2.22" "0.2.22"
 run_version
 assert_contains "version/derived-key-is-brain" "brain@brain-marketplace" "$(first_line "$BOX/out.txt")" "$(evidence)"
 
+# --- 27b. same name in two marketplaces, neither is this copy => SKIPPED ---
+# Picking one could check an unrelated install and report OK.
+mk_config "0.2.22" "0.2.22"
+cat >"$CFG/plugins/installed_plugins.json" <<JSON
+{ "version": 2, "plugins": {
+  "brain@brain-marketplace": [ { "scope": "user", "installPath": "$BOX/a", "version": "0.2.22" } ],
+  "brain@other-marketplace": [ { "scope": "user", "installPath": "$BOX/b", "version": "0.2.10" } ] } }
+JSON
+run_version
+assert_eq "version/ambiguous-name-exit-0" "0" "$STATUS" "$(evidence)"
+assert_prefix "version/ambiguous-name-skipped" "PLUGIN-VERSION: SKIPPED" "$(first_line "$BOX/out.txt")" "$(evidence)"
+
+# --- 27c. this copy's manifest unreadable => SKIPPED, no fixed-key fallback --
+mk_config "0.2.22" "0.2.22"
+mkdir -p "$BOX/plug/bin"
+cp "$VERSION_CHECK" "$BOX/plug/bin/check-plugin-version.sh"
+( unset CLAUDE_PROJECT_DIR
+  CLAUDE_CONFIG_DIR="$CFG" bash "$BOX/plug/bin/check-plugin-version.sh"
+) >"$BOX/out.txt" 2>"$BOX/err.txt"
+STATUS=$?
+assert_prefix "version/no-manifest-skipped" "PLUGIN-VERSION: SKIPPED" "$(first_line "$BOX/out.txt")" "$(evidence)"
+
 echo "--- F. check-shadow-install.sh (INNOV-318, check 12) ---"
 
 mk_shadow() { # installed_plugins.json body (plugins map); @PROJ@ = this project's path
