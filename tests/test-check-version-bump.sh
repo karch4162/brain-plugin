@@ -248,6 +248,30 @@ v="$(node -p 'require(process.argv[1]).version' "$BOX/wave/.claude-plugin/plugin
 assert_eq "bump-wave/patch" "0.1.2" "$v"
 assert_eq "bump-wave/no-brain-manifests-written" "no" "$([ -e "$BOX/brain/plugin.json" ] && echo yes || echo no)"
 
+echo "--- 15. a release that fails mid-run cannot double-bump on retry ---"
+# Fragments are consumed before the host manifests are regenerated: a retry
+# after a generator failure finds no fragments instead of stepping again.
+new_sandbox
+mkdir -p "$BOX/tools" "$BOX/.bumps/brain" "$BOX/brain/plugin.json"   # a dir: generator write hits EISDIR
+cp "$REPO_ROOT/tools/bump-version.mjs" "$REPO_ROOT/tools/generate-host-manifests.mjs" "$BOX/tools/"
+printf '{"name":"brain","version":"0.3.8","author":{"name":"t"}}\n' >"$BOX/brain/.claude-plugin/plugin.json"
+printf 'patch\n' >"$BOX/.bumps/brain/INNOV-a"
+(cd "$BOX" && node tools/bump-version.mjs brain) >"$BOX/out.txt" 2>&1
+assert_eq "partial/exit-nonzero" "yes" "$([ $? -ne 0 ] && echo yes || echo no)"
+(cd "$BOX" && node tools/bump-version.mjs brain) >"$BOX/out.txt" 2>&1
+assert_eq "partial-retry/refuses" "1" "$?"
+v="$(node -p 'require(process.argv[1]).version' "$BOX/brain/.claude-plugin/plugin.json")"
+assert_eq "partial-retry/bumped-once" "0.3.9" "$v"
+
+echo "--- 16. bump-version.mjs rejects a name that is not a plugin dir ---"
+new_sandbox
+mkdir -p "$BOX/tools" "$BOX/.bumps/nope"
+cp "$REPO_ROOT/tools/bump-version.mjs" "$REPO_ROOT/tools/generate-host-manifests.mjs" "$BOX/tools/"
+printf 'patch\n' >"$BOX/.bumps/nope/X"
+(cd "$BOX" && node tools/bump-version.mjs nope) >"$BOX/out.txt" 2>&1
+assert_eq "unknown-plugin/exit-2" "2" "$?"
+assert_eq "unknown-plugin/fragment-kept" "X" "$(ls "$BOX/.bumps/nope")"
+
 echo
 echo "$PASSED passed, $FAILED failed"
 [[ $FAILED -eq 0 ]]
