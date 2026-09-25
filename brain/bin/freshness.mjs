@@ -10,6 +10,8 @@
 //   3. Stale last_verified  — frontmatter date older than --stale-days (default 45)
 //   4. Broken source anchors— a `source:` file path that no longer exists on disk
 //   5. hot.md over budget   — the rolling cache exceeds its word budget (accretion)
+//   6. Malformed enums      — `confidence:` not exactly high|medium|low, or a present
+//                             `status:` not exactly current|superseded|falsified
 //   + missing/singleton tags, whole-vault graph connectivity (detached wiki
 //     clusters + mirror islands), and community labeling health per mirror
 //     (never labeled — no report at all — vs all-generic "Community N" labels).
@@ -133,6 +135,10 @@ for (const meta of ['index.md', 'hot.md']) {
 for (const n of parsed) for (const l of n.links) inbound.add(l);
 
 // ---- checks ------------------------------------------------------------------
+const ENUMS = [
+  ['confidence', ['high', 'medium', 'low']],
+  ['status', ['current', 'superseded', 'falsified']],
+];
 const today = new Date();
 const deadLinks = [];
 const orphans = [];
@@ -142,6 +148,7 @@ const unverifiableSources = [];
 const areaMismatchSources = [];
 const noFrontmatter = [];
 const noTags = [];
+const badEnums = [];
 const tagCounts = new Map(); // tag → [note rel paths]
 
 for (const n of parsed) {
@@ -167,6 +174,16 @@ for (const n of parsed) {
   for (const t of n.tags) {
     if (!tagCounts.has(t)) tagCounts.set(t, []);
     tagCounts.get(t).push(rel);
+  }
+
+  // 6. enum fields (INNOV-294). Only validated when present: absent `status:`
+  //    means `current`, and a missing `confidence:` is not this check's concern.
+  //    A trailing YAML comment is not part of the value (`#` after whitespace —
+  //    so this cannot eat a `#anchor`).
+  for (const [key, allowed] of ENUMS) {
+    if (!(key in n.fm)) continue;
+    const v = n.fm[key].replace(/\s+#.*$/, '');
+    if (!allowed.includes(v)) badEnums.push({ from: rel, key, value: n.fm[key], allowed });
   }
 
   // 3. stale last_verified
@@ -335,6 +352,7 @@ L.push(
     (areaMismatchSources.length ? ` · Wrong-repo anchors: ${areaMismatchSources.length}` : '') +
     (unverifiableSources.length ? ` · Unverifiable sources: ${unverifiableSources.length}` : '') +
     ` · No tags: ${noTags.length}` +
+    (badEnums.length ? ` · Malformed enums: ${badEnums.length}` : '') +
     ` · Detached wiki clusters: ${detachedKnowledge.length}` +
     (mirrorIslands.length ? ` · Mirror islands: ${mirrorIslands.length}` : '') +
     (noReportRepos.length ? ` · Graphs never labeled (no report): ${noReportRepos.length}` : '') +
@@ -433,6 +451,10 @@ if (unverifiableSources.length) {
     L.push('');
   }
 }
+section('Malformed `confidence:` / `status:`', badEnums, (b) =>
+  `[${b.from}](${b.from}) — \`${b.key}: ${b.value}\` is not one of ${b.allowed.join(' | ')}. ` +
+  `Keep the note-level floor in \`confidence:\` and qualify individual claims in the body; ` +
+  `a replaced or disproven conclusion goes in \`status:\`, not \`confidence:\`.`);
 section('Notes missing `tags:`', noTags, (f) => `[${f}](${f})`);
 const singletons = [...tagCounts.entries()].filter(([, ns]) => ns.length === 1).sort();
 section('Singleton tags (used by one note — fold into the shared vocab or drop)', singletons, ([t, ns]) => `\`${t}\` — only on [${ns[0]}](${ns[0]})`);
@@ -500,7 +522,7 @@ L.push('');
 const total =
   deadLinks.length + orphans.length + stale.length + brokenSources.length +
   areaMismatchSources.length +
-  noFrontmatter.length + noTags.length + detachedKnowledge.length + hotBloat.length +
+  noFrontmatter.length + noTags.length + badEnums.length + detachedKnowledge.length + hotBloat.length +
   mirrorIslands.length + genericLabelRepos.length + noReportRepos.length;
 L.push('---');
 L.push(total === 0 ? '✅ Clean — no issues found.' : `⚠️ ${total} item(s) to review.`);
