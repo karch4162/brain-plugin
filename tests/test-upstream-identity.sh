@@ -13,9 +13,8 @@
 # install, not a rename.
 #
 # A text scan for the fork's strings does NOT work here. Words like the fork's
-# vault and repo names appear legitimately across this repo's docs, comments,
-# and tools/compare-publications.sh — whose entire job is to translate between
-# the two brandings. Grepping for them flags correct text, and a gate that cries
+# vault and repo names can appear legitimately in this repo's docs and comments.
+# Grepping for them flags correct text, and a gate that cries
 # wolf gets ignored. So this asserts the two identity FILES positively instead.
 #
 # Run:  bash tests/test-upstream-identity.sh   (from anywhere)

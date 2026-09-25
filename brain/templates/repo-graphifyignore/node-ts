@@ -5,7 +5,7 @@
 # PURE DENYLIST — never add a `!negation` line; negation is not available here.
 #
 # Scope for this stack is `src/` per package, which in a monorepo means "the
-# workspace root MINUS this file" — hub-packages keeps its source under
+# workspace root MINUS this file" — mono-packages keeps its source under
 # contracts/src, nest-common/src, nest-logger/src and a single positional root
 # cannot express that. 58% of that mirror's nodes were out of scope before this.
 #

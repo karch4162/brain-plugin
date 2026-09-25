@@ -11,9 +11,9 @@
       "governance": { "egress": "off", "access": "private", "graphifyignore": "default" }
     },
     {
-      "name": "tray-brain",
-      "path": "/c/Users/me/Projects/tray-brain",
-      "remote": "git@github.com:vendsy/tray-brain.git",
+      "name": "team-brain",
+      "path": "/c/Users/me/Projects/team-brain",
+      "remote": "git@github.com:<org>/team-brain.git",
       "governance": { "egress": "off", "access": "eng-only", "graphifyignore": "strict" }
     }
   ]
