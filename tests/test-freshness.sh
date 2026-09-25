@@ -148,6 +148,48 @@ else
     "report: [$(grep -iF -A3 'Unverifiable' "$BOX/out.txt")]" "stderr: [$(cat "$BOX/err.txt")]"
 fi
 
+# --- 6. confidence:/status: enums are validated (INNOV-294) ----------------
+# confidence must be exactly high|medium|low; status, when present, exactly
+# current|superseded|falsified. A trailing YAML comment is not part of the
+# value (wiki-ingest's draft template writes one). Absent status is valid.
+BOX="$(mktemp -d "$TMPROOT/boxXXXXXX")"
+VAULT="$BOX/vault"
+mkdir -p "$VAULT/wiki"
+fm() { printf -- '---\nid: %s\ntags: [x]\n%b\n---\n# %s\n' "$1" "$2" "$1" >"$VAULT/wiki/$1.md"; }
+fm bad-conf 'confidence: high (decision); see linked note'
+fm bad-status 'confidence: high\nstatus: deprecated'
+fm ok-plain 'confidence: high'
+fm ok-status 'confidence: medium\nstatus: superseded'
+fm ok-comment 'confidence: low      # drafts start low; review bumps it'
+# CRLF variant: the vault is autocrlf, LF-only fixtures give false greens.
+printf -- '---\r\nid: bad-crlf\r\ntags: [x]\r\nconfidence: medium (more contested)\r\n---\r\n# c\r\n' >"$VAULT/wiki/bad-crlf.md"
+printf -- '---\r\nid: ok-crlf\r\ntags: [x]\r\nconfidence: low\r\nstatus: falsified\r\n---\r\n# c\r\n' >"$VAULT/wiki/ok-crlf.md"
+(
+  cd "$BOX" || exit 99
+  BRAIN_ROOT="$VAULT" node "$FRESH" --stdout
+) >"$BOX/out.txt" 2>"$BOX/err.txt"
+if grep -qF 'Malformed `confidence:` / `status:` (3)' "$BOX/out.txt"; then
+  pass "enum/exactly-three"
+else
+  fail "enum/exactly-three" \
+    "expected section header: Malformed \`confidence:\` / \`status:\` (3)" \
+    "actual: [$(grep -F -A5 'Malformed' "$BOX/out.txt")]" "stderr: [$(cat "$BOX/err.txt")]"
+fi
+for n in bad-conf bad-status bad-crlf; do
+  if grep -F 'wiki/'"$n"'.md' "$BOX/out.txt" | grep -qE '`(confidence|status): '; then
+    pass "enum/flags-$n"
+  else
+    fail "enum/flags-$n" "wiki/$n.md not listed as malformed"
+  fi
+done
+for n in ok-plain ok-status ok-comment ok-crlf; do
+  if grep -F 'wiki/'"$n"'.md' "$BOX/out.txt" | grep -qE '`(confidence|status): '; then
+    fail "enum/clean-$n" "valid wiki/$n.md was flagged: [$(grep -F "$n" "$BOX/out.txt")]"
+  else
+    pass "enum/clean-$n"
+  fi
+done
+
 # ================================================================= SUMMARY ==
 echo
 echo "$PASSED passed, $FAILED failed"
