@@ -64,6 +64,11 @@ case "${1:-}" in
   --cat)
     path="${2:-}"
     if [[ -z "$path" ]]; then echo "resume-brief: --cat needs a path" >&2; exit 1; fi
+    # Vault-relative only. `git show` cannot leave the tree, but the working-tree
+    # fallback's `cat` could, so refuse the escape on both paths alike.
+    case "/$path/" in
+      //*|*/../*|/[A-Za-z]:*) echo "resume-brief: $path is not a vault-relative path" >&2; exit 1 ;;
+    esac
     if [[ -n "$REF" ]]; then
       (cd "$VAULT" && MSYS_NO_PATHCONV=1 git show "$REF:$path") 2>/dev/null && exit 0
     elif [[ -f "$VAULT/$path" ]]; then

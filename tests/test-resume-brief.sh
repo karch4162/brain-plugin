@@ -237,6 +237,20 @@ new_vault
 status="$(run_brief --cat wiki/nope.md)"
 assert_eq "missing/exit-1" "1" "$status"
 
+# ========== --cat stays inside the vault, even on the worktree fallback =======
+# The ref branch cannot escape the tree; the `cat` fallback could, so both refuse.
+new_vault
+printf 'outside the vault\n' >"$BOX/secret.txt"
+git -C "$VAULT" remote remove origin >/dev/null 2>&1
+status="$(run_brief --cat ../secret.txt)"
+assert_eq "escape/dotdot-exit-1" "1" "$status"
+assert_not_contains "escape/dotdot-no-content" "$(cat "$BOX/out.txt")" "outside the vault"
+status="$(run_brief --cat wiki/../../secret.txt)"
+assert_eq "escape/inner-dotdot-exit-1" "1" "$status"
+status="$(run_brief --cat "$BOX/secret.txt")"
+assert_eq "escape/absolute-exit-1" "1" "$status"
+assert_not_contains "escape/absolute-no-content" "$(cat "$BOX/out.txt")" "outside the vault"
+
 # ======================================== CRLF content passes through intact ==
 new_vault
 printf '# hot CRLF\r\nline two\r\n' >"$SEED/wiki/hot.md"
