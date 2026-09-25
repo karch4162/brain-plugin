@@ -34,8 +34,8 @@ checked=0
 for PLUGIN_JSON in */.claude-plugin/plugin.json; do
   [ -f "$PLUGIN_JSON" ] || continue
   DIR="${PLUGIN_JSON%%/*}"
-  printf '%s
-' "$CHANGED" | grep -q "^$DIR/" || continue
+  # Pending fragments count as plugin state: dropping one un-owes a bump.
+  printf '%s\n' "$CHANGED" | grep -q -e "^$DIR/" -e "^\.bumps/$DIR/" || continue
   checked=$((checked + 1))
 
   BASE_VERSION="$(extract_version "$MB" "$PLUGIN_JSON")"
@@ -46,7 +46,7 @@ for PLUGIN_JSON in */.claude-plugin/plugin.json; do
     echo "check-version-bump: $PLUGIN_JSON absent or unreadable at base — skipping."
   elif [ "$BASE_VERSION" != "$HEAD_VERSION" ]; then
     echo "check-version-bump: OK — $DIR version bumped $BASE_VERSION -> $HEAD_VERSION."
-  elif printf '%s\n' "$ADDED" | grep -q "^\.bumps/$DIR/"; then
+  elif printf '%s\n' "$ADDED" | grep -q "^\.bumps/$DIR/[^/][^/]*$"; then
     echo "check-version-bump: OK — $DIR bump declared in .bumps/$DIR/ (applied at release)."
   else
     echo "check-version-bump: FAIL — files under $DIR/ changed but no bump was declared." >&2

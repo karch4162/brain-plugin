@@ -167,6 +167,28 @@ commit_all "brain change, fragment deleted, no bump"
 st="$(run_check frag-base)"
 assert_eq "deleted-fragment/exit-1" "1" "$st"
 
+echo "--- 10b. deleting a pending fragment WITHOUT touching brain/ still fails ---"
+# Otherwise a stray cleanup PR drops an owed bump and brain/ changes ship frozen.
+new_sandbox
+mkdir -p "$BOX/.bumps/brain"
+printf 'patch\n' >"$BOX/.bumps/brain/OLD"
+git -C "$BOX" add -A && git -C "$BOX" commit -q -m "pending fragment" && git -C "$BOX" branch -q -f frag-base
+rm "$BOX/.bumps/brain/OLD"
+commit_all "drop fragment only"
+st="$(run_check frag-base)"
+assert_eq "fragment-only-delete/exit-1" "1" "$st"
+
+echo "--- 10c. a nested path under .bumps/brain/ is not a fragment ---"
+# bump-version.mjs reads direct children only; a nested file would pass CI and
+# then crash the release.
+new_sandbox
+printf 'changed\n' >"$BOX/brain/somefile.md"
+mkdir -p "$BOX/.bumps/brain/INNOV-1"
+printf 'patch\n' >"$BOX/.bumps/brain/INNOV-1/x"
+commit_all "brain change, nested fragment"
+st="$(run_check main)"
+assert_eq "nested-fragment/exit-1" "1" "$st"
+
 echo "--- 11. two branches cut from one commit merge cleanly in either order ---"
 # The ticket's acceptance #1, literally. A version-literal bump on both branches
 # conflicts here; distinct fragment files cannot.
