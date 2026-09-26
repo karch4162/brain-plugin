@@ -29,8 +29,10 @@ your brain commands have vanished, that's the likely cause, and the steps below 
 it. `marketplace update brain-marketplace` / `plugin update` do **not** fix it: the names no
 longer match, and only remove-and-re-add does.
 
-**Nothing in your vault moves.** The registry lives at `~/.brain`, and bindings are per
-vault, not per plugin, so `BRAIN_ROOT` and `.brain/config.json` are unchanged.
+**Your vault binding doesn't move.** The registry lives at `~/.claude/brain/registry.json`,
+and bindings are per vault, not per plugin, so `BRAIN_ROOT` and `.brain/config.json` are
+unchanged. **One vault file does change:** the `repos.json` entry for the plugin repo
+itself. Your other projects' entries, and their graphs, are untouched. See section D.
 
 **Uninstall first, then install.** Two brain-family plugins bound to the same vault both
 fire their hooks and both write the same `hot.md`. `/brain:doctor` check 12 reports that
@@ -125,3 +127,45 @@ claude plugin marketplace remove tray-brain-marketplace
 not marketplace registrations, so an entry with no plugin enabled from it is invisible to it.
 Look for `tray-brain-marketplace` in `claude plugin marketplace list` (or under
 `extraKnownMarketplaces` in `~/.claude/settings.json`).
+
+## D. The vault's `repos.json` entry for the plugin repo
+
+A vault finds a repo's checkout through `repos.json`, which maps each repo **name** to one git
+**remote**, e.g. `"tray-brain-plugin": { "remote": "github.com/vendsy/tray-brain-plugin" }`.
+Anchors (`source: tray-brain-plugin/...`) and the graph mirror (`graphify/tray-brain-plugin/`)
+use the name. A checkout is matched to that entry only by its `origin` URL
+(`brain/bin/resolve-repos.mjs`); folder names don't count.
+
+So when the plugin repo's URL changes, **update the `remote` and keep the name:**
+
+| Vault | Entry | New `remote` |
+|---|---|---|
+| `tray-brain` | `tray-brain-plugin` | `github.com/vendsy/agent-infra` |
+| `personal-brain` | `brain-plugin` | only if `karch4162/brain-plugin` itself is renamed; then the new slug |
+
+**Keep the key.** Renaming it (`tray-brain-plugin` → `agent-infra`) is what actually strands
+every anchor and orphans the existing graph mirror.
+
+**Why this matters beyond anchors.** When a checkout doesn't resolve, `sync-graph.sh` names its
+mirror after the checkout's **folder**. A fresh clone of `vendsy/agent-infra` lands in a folder
+named `agent-infra`. With a stale `remote` it would publish a *second* mirror,
+`graphify/agent-infra/`, next to the real `graphify/tray-brain-plugin/`, and nothing reports it.
+
+**Order, and who does what:**
+1. The vault maintainer changes the `remote` in the vault's `repos.json` and commits it.
+   **One edit for everyone.** Do it at the cutover, not before: a checkout still cloned from
+   `vendsy/tray-brain-plugin` stops resolving the moment it changes.
+2. Each user reclones the plugin repo from the new URL (or runs
+   `git remote set-url origin https://github.com/vendsy/agent-infra` in their existing
+   checkout). On the next run, the cached path in `repos.local.json` fails its remote check,
+   and the resolver finds the checkout again by remote. It only looks inside the directories
+   it is set to scan, so clone into the same parent directory as your other repos.
+
+**⚠ Known limit.** An entry holds exactly one remote, and only `origin` is read. A machine whose
+checkout comes from the *source* (`karch4162/…`) can't resolve the Tray vault's entry, and the
+reverse is true too. A maintainer who needs both vaults to resolve needs two clones. This was
+already the case before the rename. Tracked as INNOV-337.
+
+**No graph rebuilds.** Graphs live in each project's `graphify-out/`, and graphify's own
+post-commit hook rebuilds them. The hook calls the graphify CLI and never touches the brain
+plugin's install, so uninstalling `tray-brain` leaves every project's graph and hook as it was.
