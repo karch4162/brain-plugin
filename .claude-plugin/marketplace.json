@@ -1,10 +1,10 @@
 {
-  "name": "brain-marketplace",
+  "name": "agent-infra",
   "owner": {
     "name": "Mason Beard",
     "email": "mason.beard@gmail.com"
   },
-  "description": "The Brain — a git-backed, agent-queryable knowledge substrate (Graphify code graph + Obsidian-style concept wiki + the graph→wiki→raw query rule). Infrastructure that any Claude Code session depends on; orchestrators are consumers, never the reverse.",
+  "description": "Durable infrastructure for an agent working a repo over time. brain is the memory: a git-backed, agent-queryable knowledge substrate (Graphify code graph + Obsidian-style concept wiki + the graph→wiki→raw query rule). wave is the labor: waves of unsupervised workers on vetted tracker issues, a consumer of brain and never a dependency of it.",
   "plugins": [
     {
       "name": "brain",

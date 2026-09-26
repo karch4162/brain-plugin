@@ -33,7 +33,7 @@ are *consumers* that depend on it, never the reverse.
 `wave` runs Orca worker waves on agent-ready Linear or Jira issues. It is a *consumer* of brain
 (`/brain:resume`, `/brain:save`), never a dependency. A repo opts in with a committed
 `.claude/wave/config.env` (this repo's points at Jira INNOV + label `brain-plugin`) and optional
-`.claude/wave/notes.md` for project rules. Install: `claude plugin install wave@brain-marketplace`.
+`.claude/wave/notes.md` for project rules. Install: `claude plugin install wave@agent-infra`.
 
 Mirrors the `ai-agent-manager` plugin (the reference consumer): marketplace wrapper + nested plugin,
 `${CLAUDE_PLUGIN_ROOT}` for legacy runtime paths. The portable runtime uses a neutral `.brain/config.json`
@@ -109,7 +109,7 @@ Each branch adds a bump fragment instead, `.bumps/brain/<ticket>` containing `pa
    current version, it does **not** bump for you; there's no `npm version` equivalent).
 3. Commit via the branch → PR flow (the `main`-push guardrail; see HANDOVER).
 
-Consumers then pick it up with `claude plugin marketplace update` → `claude plugin update brain@brain-marketplace`
+Consumers then pick it up with `claude plugin marketplace update` → `claude plugin update brain@agent-infra`
 (→ `/reload-plugins` or restart). *(Trade-off: an omitted marketplace `version` means the plugin's
 metadata isn't shown in the pre-install browse UI — fine for this private, known-audience marketplace.)*
 
@@ -118,8 +118,8 @@ to bump, uninstall + reinstall forces a fresh copy from source — `claude plugi
 **not** when the version is unchanged:
 
 ```bash
-claude plugin uninstall brain@brain-marketplace
-claude plugin install   brain@brain-marketplace   # then /reload-plugins (or restart)
+claude plugin uninstall brain@agent-infra
+claude plugin install   brain@agent-infra   # then /reload-plugins (or restart)
 ```
 
 ## Design decisions taken in extraction
