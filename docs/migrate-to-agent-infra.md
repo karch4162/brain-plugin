@@ -16,6 +16,10 @@ Source-repo users do **not** point at `vendsy/agent-infra`. That mirror exists o
 the Tray fork is being archived. The source repo is deliberately never renamed, because
 renaming it would strand every `source: brain-plugin/...` anchor in the vault.
 
+**Add one of the two URLs, never both.** Both repos serve a manifest named `agent-infra`.
+If a marketplace registers under its manifest name (⚠ UNCONFIRMED, see step A.3), the two
+URLs compete for the same registration. Pick the one from your row of the table.
+
 **Nothing in your vault moves.** The registry lives at `~/.brain`, and bindings are per
 vault, not per plugin, so `BRAIN_ROOT` and `.brain/config.json` are unchanged.
 
@@ -69,8 +73,10 @@ A typical `~/.claude/settings.json` before migrating:
 
 ## B. Tray user (`tray-brain` fork → `vendsy/agent-infra`)
 
-Don't start until the `vendsy/agent-infra` mirror has been published. It doesn't exist
-when this note is written.
+Don't start until the `vendsy/agent-infra` mirror serves the renamed manifest: its
+`.claude-plugin/marketplace.json` on `main` should say `"name": "agent-infra"`. If it still
+says `brain-marketplace`, the mirror predates the rename. Adding it then registers the old
+name, and you'd have to migrate a second time.
 
 1. ✔ Uninstall `tray-brain` at **both** scopes. A project-scoped copy left behind shadows
    the user-scoped one without any warning (SPO-324). Run the project-scope command from
