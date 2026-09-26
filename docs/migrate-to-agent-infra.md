@@ -9,16 +9,15 @@ re-adds once.
 
 | You install from | Marketplace URL after the rename | Plugin prefix |
 |---|---|---|
-| **The source repo** (`karch4162/brain-plugin`), registered as `brain-marketplace` | **Same URL.** Only the registered name changes. | `/brain:` (unchanged) |
+| **The source repo**, registered as `brain-marketplace` | `karch4162/agent-infra`. The repo was renamed from `karch4162/brain-plugin` on 2026-09-26; the old URL redirects. | `/brain:` (unchanged) |
 | **The Tray fork** (`vendsy/tray-brain-plugin`), plugin `tray-brain` | **New URL:** `vendsy/agent-infra` | `/tray-brain:` becomes `/brain:` |
 
 Source-repo users do **not** point at `vendsy/agent-infra`. That mirror exists only because
-the Tray fork is being archived. The source repo is deliberately never renamed, because
-renaming it would strand every `source: brain-plugin/...` anchor in the vault.
+the Tray fork is being archived.
 
-**Add one of the two URLs, never both.** Both repos serve a manifest named `agent-infra`.
-If a marketplace registers under its manifest name (⚠ UNCONFIRMED, see step A.3), the two
-URLs compete for the same registration. Pick the one from your row of the table.
+**Add one of the two URLs, never both.** Both repos serve a manifest named `agent-infra`, and
+a marketplace registers under its manifest name (confirmed in the rehearsal). So the two URLs
+compete for the same registration. Pick the one from your row of the table.
 
 **Migrate soon after the rename reaches your URL, not on the next update.** Git-sourced
 marketplaces refresh in the background at startup. After a refresh, the registration still
@@ -38,12 +37,13 @@ itself. Your other projects' entries, and their graphs, are untouched. See secti
 fire their hooks and both write the same `hot.md`. `/brain:doctor` check 12 reports that
 state, but it's cheaper not to create it.
 
-> **Status of these steps.** Each command below is confirmed against `claude plugin … --help`
-> (Claude Code's own CLI help), and marked ✔. Steps marked **⚠ UNCONFIRMED** describe
-> behaviour nobody has observed yet. The first walk-through on the maintainer's machine should
-> confirm or correct them before anyone else follows this note.
+> **Status of these steps.** Section A was walked on the maintainer's machine on 2026-09-26.
+> Every step worked as written, and checks 7 and 12 both came back OK afterwards. Steps marked
+> ✔ **observed** were seen working. Two behaviours are still **⚠ UNCONFIRMED**, because the
+> rehearsal couldn't reach them: `uninstall` at a scope with nothing installed (B.1), and the
+> old key breaking after a refresh (above).
 
-## A. Source-repo user (`brain-marketplace` → `agent-infra`, same URL)
+## A. Source-repo user (`brain-marketplace` → `agent-infra`)
 
 A typical `~/.claude/settings.json` before migrating:
 
@@ -52,35 +52,40 @@ A typical `~/.claude/settings.json` before migrating:
 "enabledPlugins": { "brain@brain-marketplace": true, "wave@brain-marketplace": true }
 ```
 
-1. ✔ Uninstall the old keys (add `--scope project` for any repo where you installed at
-   project scope):
+1. ✔ **observed.** Uninstall the old keys. Add `--scope project` for any repo where you
+   installed at project scope. Uninstall also removes the keys from `enabledPlugins`, so
+   there's nothing to clean up by hand.
    ```bash
    claude plugin uninstall brain@brain-marketplace --scope user
    claude plugin uninstall wave@brain-marketplace  --scope user
    ```
-2. ✔ Remove the old marketplace registration. With no `--scope`, this removes the
-   declaration from every settings scope:
+2. ✔ **observed.** Remove the old marketplace registration, and the fork's if you ever added
+   it (section C). With no `--scope`, this removes the declaration from every settings scope.
    ```bash
    claude plugin marketplace remove brain-marketplace
+   claude plugin marketplace remove tray-brain-marketplace   # only if registered
    ```
-   **⚠ UNCONFIRMED:** whether this also drops the `brain@brain-marketplace` /
-   `wave@brain-marketplace` entries from `enabledPlugins`. Check `settings.json` afterwards,
-   and if they are still there, delete them by hand. They point at a marketplace that no
-   longer exists.
-3. ✔ Re-add the **same** URL:
+3. ✔ **observed.** Add the source repo under its new URL. It registers as `agent-infra`,
+   the name in the manifest, and reports "declared in user settings".
    ```bash
-   claude plugin marketplace add https://github.com/karch4162/brain-plugin
+   claude plugin marketplace add https://github.com/karch4162/agent-infra
    ```
-   **⚠ UNCONFIRMED:** that the re-added marketplace registers as `agent-infra` (the name in
-   the manifest it serves) and not under some other key. Confirm with
-   `claude plugin marketplace list` before step 4.
-4. ✔ Install under the new key:
+4. ✔ **observed.** Install under the new key:
    ```bash
    claude plugin install brain@agent-infra
    claude plugin install wave@agent-infra      # if you use wave
    ```
-5. Restart Claude Code (or `/reload-plugins`), then run `/brain:doctor`. Check 7 should report
-   the install as `brain@agent-infra`, and check 12 should report exactly one brain install.
+5. ✔ **observed.** Restart Claude Code (or `/reload-plugins`), then run `/brain:doctor`.
+   Check 7 should report `brain@agent-infra`, and check 12 should report exactly one brain
+   install.
+6. If you recloned the source repo instead of running `git remote set-url` on your existing
+   checkout, also do section D: the vault's `repos.json`, **and a graph build in the new
+   clone**.
+
+Old cache directories (`~/.claude/plugins/cache/brain-marketplace/`, `…/tray-brain-marketplace/`)
+stay on disk after the uninstall. Check 12 doesn't count them as installs. Delete them once no
+session or wave worker started before the migration is still running, because those still
+point into them.
 
 ## B. Tray user (`tray-brain` fork → `vendsy/agent-infra`)
 
@@ -118,7 +123,7 @@ This applies to anyone who ever added the fork, including a source-repo user who
 installed from it. After the archive, the entry points at a read-only repo that will never
 update.
 
-✔ Remove it:
+✔ **observed.** Remove it:
 ```bash
 claude plugin marketplace remove tray-brain-marketplace
 ```
@@ -126,7 +131,7 @@ claude plugin marketplace remove tray-brain-marketplace
 **`/brain:doctor` will not find this for you.** Check 12 counts installed and enabled plugins,
 not marketplace registrations, so an entry with no plugin enabled from it is invisible to it.
 Look for `tray-brain-marketplace` in `claude plugin marketplace list` (or under
-`extraKnownMarketplaces` in `~/.claude/settings.json`).
+`extraKnownMarketplaces` in `~/.claude/settings.json`). Tracked as INNOV-336.
 
 ## D. The vault's `repos.json` entry for the plugin repo
 
@@ -141,7 +146,7 @@ So when the plugin repo's URL changes, **update the `remote` and keep the name:*
 | Vault | Entry | New `remote` |
 |---|---|---|
 | `tray-brain` | `tray-brain-plugin` | `github.com/vendsy/agent-infra` |
-| `personal-brain` | `brain-plugin` | only if `karch4162/brain-plugin` itself is renamed; then the new slug |
+| `personal-brain` | `brain-plugin` | `github.com/karch4162/agent-infra` (done 2026-09-26) |
 
 **Keep the key.** Renaming it (`tray-brain-plugin` → `agent-infra`) is what actually strands
 every anchor and orphans the existing graph mirror.
@@ -151,21 +156,31 @@ mirror after the checkout's **folder**. A fresh clone of `vendsy/agent-infra` la
 named `agent-infra`. With a stale `remote` it would publish a *second* mirror,
 `graphify/agent-infra/`, next to the real `graphify/tray-brain-plugin/`, and nothing reports it.
 
+`repos.json` is deliberately left out of `.saveinclude`, so no brain command commits it.
+Change it on a branch and open a PR, like a trusted wiki note.
+
 **Order, and who does what:**
 1. The vault maintainer changes the `remote` in the vault's `repos.json` and commits it.
    **One edit for everyone.** Do it at the cutover, not before: a checkout still cloned from
    `vendsy/tray-brain-plugin` stops resolving the moment it changes.
-2. Each user reclones the plugin repo from the new URL (or runs
-   `git remote set-url origin https://github.com/vendsy/agent-infra` in their existing
-   checkout). On the next run, the cached path in `repos.local.json` fails its remote check,
+2. Each user either runs `git remote set-url origin <new URL>` in their existing checkout, or
+   reclones. On the next run, the cached path in `repos.local.json` fails its remote check,
    and the resolver finds the checkout again by remote. It only looks inside the directories
    it is set to scan, so clone into the same parent directory as your other repos.
+3. **If you recloned, build the graph once in the new clone** (`/graphify` there).
+   `graphify-out/` is not in git, so a fresh clone has no graph. The vault's mirror is
+   *copied from* that checkout's graph, so until you build one the mirror stays frozen at its
+   last copy. `/brain:doctor` reports a missing local graph as optional ("only if you want the
+   cwd query hook"); for this repo it isn't (INNOV-338). **Don't** copy the old folder's
+   `graphify-out/` across as a shortcut: sync copies whenever the two differ, so an older
+   graph would overwrite a newer mirror.
 
 **⚠ Known limit.** An entry holds exactly one remote, and only `origin` is read. A machine whose
 checkout comes from the *source* (`karch4162/…`) can't resolve the Tray vault's entry, and the
 reverse is true too. A maintainer who needs both vaults to resolve needs two clones. This was
 already the case before the rename. Tracked as INNOV-337.
 
-**No graph rebuilds.** Graphs live in each project's `graphify-out/`, and graphify's own
-post-commit hook rebuilds them. The hook calls the graphify CLI and never touches the brain
-plugin's install, so uninstalling `tray-brain` leaves every project's graph and hook as it was.
+**No other graph rebuilds.** Every other project's graph lives in its own `graphify-out/`, and
+graphify's own post-commit hook rebuilds it. The hook calls the graphify CLI and never touches
+the brain plugin's install, so uninstalling `tray-brain` leaves those graphs and hooks as they
+were. Only a *fresh clone* of the plugin repo needs a build (step 3).

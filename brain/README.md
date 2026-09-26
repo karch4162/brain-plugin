@@ -42,7 +42,7 @@ Find your situation, run the commands in order. Legend: **`/brain:*`** = this pl
    > **Coming from `brain-marketplace` or the `tray-brain` fork? Stop — do not run these yet.** Uninstall the old copy first, or both copies go live on the same vault: [docs/migrate-to-agent-infra.md](../docs/migrate-to-agent-infra.md).
 
    ```
-   /plugin marketplace add https://github.com/karch4162/brain-plugin
+   /plugin marketplace add https://github.com/karch4162/agent-infra
    /plugin install brain@agent-infra
    ```
    Then restart Claude Code (or `/reload-plugins`).

@@ -11,7 +11,7 @@ The design spec ("the POC") is the source of truth: `AI-OS/personal-brain/docs/s
 ## Repos & locations
 | What | Where |
 |---|---|
-| **Plugin (this repo)** | local `C:\Users\mason\Projects\brain-plugin` · remotes: `origin`=github.com/karch4162/brain-plugin (personal lineage), `vendsy`=github.com/vendsy/tray-brain-plugin (Tray-internal) — both **PRIVATE** |
+| **Plugin (this repo)** | local `C:\Users\mason\Projects\agent-infra` · remotes: `origin`=github.com/karch4162/agent-infra (source; renamed from brain-plugin 2026-09-26), `vendsy`=github.com/vendsy/agent-infra (Tray mirror, main + tags), `vendsy-legacy`=github.com/vendsy/tray-brain-plugin (archive pending). `origin` is **PUBLIC**; both vendsy repos are **PRIVATE** |
 | **Design spec (POC)** | `AI-OS/personal-brain/docs/second-brain-poc.md` (mirrored to Confluence "Innovation" space) |
 | **Personal pilot vault** | `AI-OS/personal-brain` (git tag `pre-plugin-baseline` = pre-extraction state; `INSTALL_BASELINE.md` = out-of-repo scaffolding inventory) |
 | **Tray team vault** | `AI-OS/tray-brain` → github.com/vendsy/tray-brain (PRIVATE); covers `Tray/tray_pos_flutter` (scope `lib/`) |
