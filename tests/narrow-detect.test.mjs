@@ -7,8 +7,12 @@ import { spawnSync } from 'node:child_process';
 
 const SCRIPT = resolve(import.meta.dirname, '../brain/bin/narrow-detect.mjs');
 
+// maintenance.auto/gc.auto off: after `commit`, recent git forks a detached
+// maintenance run that can still be writing .git/objects when t.after deletes
+// the repo, failing teardown with ENOTEMPTY (seen on the ubuntu runner).
 const git = (cwd, ...args) =>
-  spawnSync('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { encoding: 'utf8' });
+  spawnSync('git', ['-C', cwd, '-c', 'user.email=t@t', '-c', 'user.name=t',
+    '-c', 'maintenance.auto=false', '-c', 'gc.auto=0', ...args], { encoding: 'utf8' });
 
 const run = (vault) => spawnSync('node', [SCRIPT, '--vault', vault], { encoding: 'utf8' });
 
