@@ -39,17 +39,19 @@ Find your situation, run the commands in order. Legend: **`/brain:*`** = this pl
 ### Prerequisites — once per machine
 1. Install **`uv`** (https://docs.astral.sh/uv/). The brain installs graphify (pinned) through it on first `/brain:init`, **including registering the `/graphify` skill** (`graphify install --platform claude` — the CLI and the skill are separate installs; init handles both and `/brain:doctor` verifies both).
 2. Install the plugin (needs access to the repo):
+   > **Coming from `brain-marketplace` or the `tray-brain` fork? Stop — do not run these yet.** Uninstall the old copy first, or both copies go live on the same vault: [docs/migrate-to-agent-infra.md](../docs/migrate-to-agent-infra.md).
+
    ```
    /plugin marketplace add https://github.com/karch4162/brain-plugin
    /plugin install brain@agent-infra
    ```
    Then restart Claude Code (or `/reload-plugins`).
 
-   > **Coming from `brain-marketplace` or the `tray-brain` fork?** Uninstall the old copy first: [docs/migrate-to-agent-infra.md](../docs/migrate-to-agent-infra.md).
-
    > **Add by URL, not by local path.** With the GitHub URL, Claude Code clones and caches the marketplace itself (`~/.claude/plugins/`) — you never clone or pull anything manually. Git-sourced marketplaces also auto-refresh in the background at startup.
 
 ### Updating — no local checkout involved
+Still registered as `brain-marketplace`? These commands don't apply to you yet. Migrate first: [docs/migrate-to-agent-infra.md](../docs/migrate-to-agent-infra.md).
+
 ```
 /plugin marketplace update agent-infra   # git-pulls the cached marketplace (also happens automatically at startup)
 /plugin update brain@agent-infra         # picks up the new version (no-ops if the version didn't bump)

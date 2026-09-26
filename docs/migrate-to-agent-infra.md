@@ -20,6 +20,15 @@ renaming it would strand every `source: brain-plugin/...` anchor in the vault.
 If a marketplace registers under its manifest name (⚠ UNCONFIRMED, see step A.3), the two
 URLs compete for the same registration. Pick the one from your row of the table.
 
+**Migrate soon after the rename reaches your URL, not on the next update.** Git-sourced
+marketplaces refresh in the background at startup. After a refresh, the registration still
+named `brain-marketplace` holds a manifest named `agent-infra`. **⚠ UNCONFIRMED but
+expected:** the host then fails to load `brain@brain-marketplace` ("Plugin not found in
+marketplace"). If the plugin doesn't load, `/brain:doctor` can't run to tell you why. If
+your brain commands have vanished, that's the likely cause, and the steps below still fix
+it. `marketplace update brain-marketplace` / `plugin update` do **not** fix it: the names no
+longer match, and only remove-and-re-add does.
+
 **Nothing in your vault moves.** The registry lives at `~/.brain`, and bindings are per
 vault, not per plugin, so `BRAIN_ROOT` and `.brain/config.json` are unchanged.
 
